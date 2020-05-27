@@ -1,0 +1,17 @@
+Notes
+
+key value is the same as previous assignment? Simple rest API?
+A: yes
+
+Does a shard store parts of the KVS? How to break up dictionary?
+consitent hashing
+Each dictionary is a subset of the main dictionary
+
+What is a node with 2 shards? Two partitions of the data of that node?
+2 copies of the subset dictionaries. 	
+
+Adding a node to a shard? Does that mean spliting the dictionary?
+Basically, another add another replica to the shard. No, does not mean splitting dictionary
+
+Have a global view of replicas up right now. When someone goes offline or online. This will help with sharding. 
+Shards are above replicas and the global view is above the sharding	
