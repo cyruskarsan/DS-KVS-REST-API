@@ -1,17 +1,33 @@
-Notes
+Notes and design
 
 key value is the same as previous assignment? Simple rest API?
 A: yes
 
 Does a shard store parts of the KVS? How to break up dictionary?
-consitent hashing
+A: consitent hashing. Use this github library: https://github.com/ultrabug/uhashring
 Each dictionary is a subset of the main dictionary
 
 What is a node with 2 shards? Two partitions of the data of that node?
-2 copies of the subset dictionaries. 	
+A: 2 copies of the subset dictionaries. 	
 
 Adding a node to a shard? Does that mean spliting the dictionary?
-Basically, another add another replica to the shard. No, does not mean splitting dictionary
+A: Basically, another add another replica to the shard. No, does not mean splitting dictionary
 
-Have a global view of replicas up right now. When someone goes offline or online. This will help with sharding. 
+Shards must have two nodes. This is the only requirement and all other nodes may be distributed however we please.
+
+Layers: 
+Global replica view is top layer
+Shards are below global view
+Nodes are apart of shards.
 Shards are above replicas and the global view is above the sharding	
+
+We must be able to provide:
+1. ID of all shards in our program
+2. ID of a shard given a node id (how do we know what node id is?)
+3. Keys in a shard
+4. Given shard number, provide shard id members (socket address of each node in the shard)
+
+Resharding
+gather all keys, rehash them, and then redistribute them
+
+All containers will have the same shard count variable when first initialized
