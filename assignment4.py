@@ -569,8 +569,8 @@ if __name__ == "__main__":
 	#shards created are
 	print("shards created are", getShards())
 
-	# instantiateReplica(viewstore, socketaddr)
-	# print("instatiating..")
+	instantiateReplica(viewstore, socketaddr)
+	print("instatiating..")
 
 	
 
