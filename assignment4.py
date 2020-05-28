@@ -34,8 +34,9 @@ total_differences = 0
 replicaNumber = None
 NumberOfReplicas = None
 
+
 #global var containing all known shards
-shardcnt=""
+shards = []
 
 # Used to delete an address from viewstore and broadcast that 
 # address to the rest of the replicas. This function is triggered by 
@@ -469,6 +470,16 @@ class KVS(Resource):
 	def get(self):
 		return dic
 
+class ShardIDs(Resource):
+	#return all shard id's
+	def get(self):
+		return {"message":"Shard IDs retrieved successfully","shard-ids": getShards()},200
+
+class NodeShardId(Resource):
+	#TODO, return which shard the node belongs to
+	def get(self):
+		return None
+
 # Used to sync a replica in the case that it goes down and comes back online
 def instantiateReplica(viewstore, socketaddress):
 	missingTheReplica = []
@@ -547,6 +558,7 @@ if __name__ == "__main__":
 	else:
 		print("[ERROR] VIEW Docker env variable not found!")
 
+	shardcnt=""
 	#check to see if shard count is present. If not, we know that the node was not instantiated on startup
 	if "SHARD_COUNT" in os.environ and os.environ["SHARD_COUNT"]!="":
 		shardcnt = os.environ["SHARD_COUNT"]
@@ -565,8 +577,8 @@ if __name__ == "__main__":
 	#add the shards to the hashring
 	for i in range(int(shardcnt)):
 		hr.add_node("shard"+str(i))
-	
-	#shards created are
+		shards.append("shard"+str(i))
+
 	print("shards created are", getShards())
 
 	instantiateReplica(viewstore, socketaddr)
@@ -577,4 +589,6 @@ if __name__ == "__main__":
 	api.add_resource(Store, "/key-value-store/<key>")
 	api.add_resource(ViewStore, "/key-value-store-view")
 	api.add_resource(KVS, "/kvs")
+	api.add_resource(ShardIDs, "/shard-ids")
+	api.add_resource(NodeShardId, "/node-shard-id")
 	app.run(host=ip_add,port=8085)
