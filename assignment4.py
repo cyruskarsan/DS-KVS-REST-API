@@ -10,6 +10,7 @@ from uhashring import HashRing
 import json
 import os
 import requests as req
+import numpy as np
 import time
 
 
@@ -35,8 +36,13 @@ replicaNumber = None
 NumberOfReplicas = None
 
 
+
+
+
 #global var containing all known shards
 shards = []
+shard_id = None
+shard_members = {}
 
 # Used to delete an address from viewstore and broadcast that 
 # address to the rest of the replicas. This function is triggered by 
@@ -78,13 +84,13 @@ def deleteaddr(targetaddr):
 #Calculates total differences between current clock and received metadata clock
 #Expected clock
 def calculateDifferences(combined_clock):
-	total_differences = 0
-	for a,b in combined_clock:
+    total_differences = 0
+    for a,b in combined_clock:
 
-		if a != b:
-			total_differences += abs( int(a) - int(b) )
-		
-	return total_differences
+        if a != b:
+            total_differences += abs( int(a) - int(b) )
+
+    return total_differences
 
 """
 this differentiates the replicas from one another
@@ -154,6 +160,15 @@ def checkOtherViews(viewstore):
     else:
         return None
 
+#Sort socket address/view addresses helper functions
+def isolateIP(ip):
+    return tuple(int(part) for part in ip.split('.'))
+
+def sort_key(item):
+    return isolateIP(item[0])
+
+
+
 """
 Checks to see if a replica is behind in terms of causal consitancy. If it is, the replica should send a GET request 
 to other replicas and compare vector clock. If the returned vector clock is equal to the current vector clock, 
@@ -161,434 +176,520 @@ replica should update the it's KVS with that replica's version of it. If the rep
 dictionary, otherwise it should return None.
 """
 def checkVersion(currentCopy, receivedCopy, replicaNumber, key):
-	differencesIndex = {}
-	seen = []
-	for i in range(len(currentCopy)):
-		if currentCopy[i] != receivedCopy[i]:
-			#replica was down, request may be wrong
-			print("Here is the data: ")
-			if currentCopy[i] < receivedCopy[i]:
-				print("current replica is behind")
-				differencesIndex[replicaNumber] = 'behind'
-				vc = receivedCopy
-				# iterate through the replicas
-				for address in viewstore:
-					# if we are not dealing with the replica responding to the client
-					if address != socketaddr:
-						# We want to extract the vector clock
-						try:
-							r = req.get("http://" + address +"/key-value-store/"+str(key), timeout=5)
-							if r.status_code != 404:
-								vc = r.json()['causal-metadata']
+    differencesIndex = {}
+    seen = []
+    for i in range(len(currentCopy)):
+        if currentCopy[i] != receivedCopy[i]:
+            #replica was down, request may be wrong
+            print("Here is the data: ")
+            if currentCopy[i] < receivedCopy[i]:
+                print("current replica is behind")
+                differencesIndex[replicaNumber] = 'behind'
+                vc = receivedCopy
+                # iterate through the replicas
+                for address in viewstore:
+                    # if we are not dealing with the replica responding to the client
+                    if address != socketaddr:
+                        # We want to extract the vector clock
+                        try:
+                            r = req.get("http://" + address +"/key-value-store/"+str(key), timeout=5)
+                            if r.status_code != 404:
+                                vc = r.json()['causal-metadata']
 
-								# if the vector clock matches, return the KVS of that replica
-								kvs = None
-								if vc.split(" ") == receivedCopy:
-									print("Sending GET to", address)
-									try:
-										kvs = req.get("http://" + address + "/kvs", timeout=5)
-										print(kvs.json())
-									except req.exceptions.RequestException as ex:
-										print("could not get from ", address, ex)
+                                # if the vector clock matches, return the KVS of that replica
+                                kvs = None
+                                if vc.split(" ") == receivedCopy:
+                                    print("Sending GET to", address)
+                                    try:
+                                        kvs = req.get("http://" + address + "/kvs", timeout=5)
+                                        print(kvs.json())
+                                    except req.exceptions.RequestException as ex:
+                                        print("could not get from ", address, ex)
 
-								# print("When trying to update replica, failed to reach replica:", address)
-								# iterate through each key in the replica's dictionary and update each key in the current replica's dictionary
-								# basically get it up to date
-								if kvs:
-									for key in kvs.json():
-										dic[key] = kvs.json()[key]
-								print("DIC:", dic)
-						except req.exceptions.RequestException as ex:
-							print("could not get from ", address, ex)
-						#this replica contains the key value store and is not behind
-				if vc == receivedCopy:
-					return vc
-				else:
-					return vc.split(" ")
-			else:
-				print("current replica is advanced??? returning -99")
-				differencesIndex[replicaNumber] = 'advanced'
-				return -99
-	return None
+                                # print("When trying to update replica, failed to reach replica:", address)
+                                # iterate through each key in the replica's dictionary and update each key in the current replica's dictionary
+                                # basically get it up to date
+                                if kvs:
+                                    for key in kvs.json():
+                                        dic[key] = kvs.json()[key]
+                                print("DIC:", dic)
+                        except req.exceptions.RequestException as ex:
+                            print("could not get from ", address, ex)
+                        #this replica contains the key value store and is not behind
+                if vc == receivedCopy:
+                    return vc
+                else:
+                    return vc.split(" ")
+            else:
+                print("current replica is advanced??? returning -99")
+                differencesIndex[replicaNumber] = 'advanced'
+                return -99
+    return None
 
 # /key-value-store - same as assignment2, however also includes 
 # forwarding functionality for PUT and DELETE.
 class Store(Resource):
-	def get(self,key):
-		print("(Log Message)[STORE] Initiating get!")
-		print("causal: ", causalmetadata, flush=True)
-		print("length of causal: ", len(causalmetadata.split(" ")), flush=True)
-		print("length of viewstore: ", len(viewstore), flush=True)
-		if key not in dic:
-			return {'doesExist':False,'error':'Key does not exist','message':'Error in GET'}, 404
-		return {"message":"Retrieved successfully", "causal-metadata": causalmetadata, "value": dic.get(key)}, 200
+    def get(self,key):
+        print("(Log Message)[STORE] Initiating get!")
+        print("causal: ", causalmetadata, flush=True)
+        print("length of causal: ", len(causalmetadata.split(" ")), flush=True)
+        print("length of viewstore: ", len(viewstore), flush=True)
+        if key not in dic:
+            return {'doesExist':False,'error':'Key does not exist','message':'Error in GET'}, 404
+        return {"message":"Retrieved successfully", "causal-metadata": causalmetadata, "value": dic.get(key)}, 200
 
-	def put(self,key):
-		global causalmetadata
-		global total_differences
-		replicaNumber = getReplicaNumber()
-		#replicaNumber is the index of the current replica
-		#we can use this with the vector clock to figure out which one
+    def put(self,key):
+        global causalmetadata
+        global total_differences
+        replicaNumber = getReplicaNumber()
+        #replicaNumber is the index of the current replica
+        #we can use this with the vector clock to figure out which one
 
-		print("(Log Message)[STORE] Initiating put!")
-		parser = reqparse.RequestParser(bundle_errors=True)
-		parser.add_argument("value", type=str)
-		parser.add_argument("causal-metadata", type=str)
-		parser.add_argument("node", type=int)
-		args = parser.parse_args()
-		print(args, flush=True)
+        print("(Log Message)[STORE] Initiating put!")
+        parser = reqparse.RequestParser(bundle_errors=True)
+        parser.add_argument("value", type=str)
+        parser.add_argument("causal-metadata", type=str)
+        parser.add_argument("node", type=int)
+        args = parser.parse_args()
+        print(args, flush=True)
 
-		#parsing meta-data
-		meta = str(args["causal-metadata"])
+        #parsing meta-data
+        meta = str(args["causal-metadata"])
 
-		#case of first put
-		#other requests with an empty causal-metadata is illegal
-		if meta == "":
-			meta = causalmetadata
+        #case of first put
+        #other requests with an empty causal-metadata is illegal
+        if meta == "":
+            meta = causalmetadata
 
-		print("meta: ", meta,flush=True)
-		received_clock = meta.split(" ")
-		print("received clock: ", received_clock, flush=True)
-		current_clock = causalmetadata.split(" ")
-		print("current_clock: ", current_clock, flush=True)
-		print("replicaNumber: ", replicaNumber)
+        print("meta: ", meta,flush=True)
+        received_clock = meta.split(" ")
+        print("received clock: ", received_clock, flush=True)
+        current_clock = causalmetadata.split(" ")
+        print("current_clock: ", current_clock, flush=True)
+        print("replicaNumber: ", replicaNumber)
 
-		#Soft copy of the vector clocks to work with
-		currentCopy = current_clock.copy()
-		receivedCopy = received_clock.copy()
-		print("Current copy, received copy:", currentCopy, receivedCopy)
-		updatedVC = checkVersion(currentCopy, receivedCopy, replicaNumber, key)
-		print("updated VC", updatedVC)
+        #Soft copy of the vector clocks to work with
+        currentCopy = current_clock.copy()
+        receivedCopy = received_clock.copy()
+        print("Current copy, received copy:", currentCopy, receivedCopy)
+        updatedVC = checkVersion(currentCopy, receivedCopy, replicaNumber, key)
+        print("updated VC", updatedVC)
 
-		# set the current clock to the clock received from the other replica
-		if updatedVC:
-			current_clock = updatedVC
-		
-		# There was no conflict, set the indivdual replica clock
-		clock = int(current_clock[replicaNumber])
-		
-		newclock = int(received_clock[replicaNumber])
-		
-		#make sure the nodes are not incrementing their own VC's, only the replica comminucating with the client should increment
-		if not args["node"]:
-			clock +=1
-			current_clock[replicaNumber] = str(clock)
+        # set the current clock to the clock received from the other replica
+        if updatedVC:
+            current_clock = updatedVC
 
-		#then update point-wise max
-		updated_clock = [max(value) for value in zip(current_clock, received_clock)]
-		print("updated clock:", updated_clock,flush=True)
+        # There was no conflict, set the indivdual replica clock
+        clock = int(current_clock[replicaNumber])
 
-		causalmetadata = " ".join(updated_clock)
+        newclock = int(received_clock[replicaNumber])
 
-		#incorrect input
-		if not args["value"]:
-			res = {'error':'Value is missing', 'message': 'Error in PUT'}
-			return res,400
-		
-		#key is too long
-		if len(key)>50:
-			res = {'error':'Key is too long', 'message': 'Error in PUT'}
-			return res,400
+        #make sure the nodes are not incrementing their own VC's, only the replica comminucating with the client should increment
+        if not args["node"]:
+            clock +=1
+            current_clock[replicaNumber] = str(clock)
 
-		# Confirmed to be a valid key! Create a newkey boolean and either add or replace.
-		newkey = False
-		if key not in dic:
-			dic[key] = args["value"]
-			res = {"message":"Added successfully", "causal-metadata": causalmetadata}
-			newkey = True
-		else:
-			# To prevent constant repetitive put calls between replicas...
-			originalvalue = dic.get(key)
-			if originalvalue == args["value"]:
-				# Nothing changed. Do not broadcast.
-				res = {"message":"Updated successfully", "causal-metadata": causalmetadata}
-				return res,200
-			else:
-				# Something changed!
-				dic[key] = args["value"]
-				res = {"message":"Updated successfully", "causal-metadata": causalmetadata}
-				newkey = False
-		
-		
-		# Regardless of newkey, Broadcast the same PUT request to all other replicas in the view save for itself.
-		valuevar = str(args["value"])
-		payload = {"value" : valuevar, "causal-metadata": causalmetadata, "node":1}
-		
+        #then update point-wise max
+        updated_clock = [max(value) for value in zip(current_clock, received_clock)]
+        print("updated clock:", updated_clock,flush=True)
 
-		# only the the replica dealing with the client should broadcast the request
-		if not args["node"]:
-			print("  - Broadcasting PUT to other replicas...")
-			print("Payload: ", payload)
-			for replicaaddr in viewstore:
-				if replicaaddr != socketaddr:
-					print("  - Sending PUT to " + replicaaddr + "...")
-					try:
-						request = req.put("http://" + replicaaddr +"/key-value-store/"+str(key), data=payload, timeout=timeoutduration)
-						print("   - Success!")
-					except req.exceptions.RequestException as ex:
-						# WARNING, a replica in the view could not be reached! time to call key-value-store-view DELETE.
-						print("   WARNING - Unable to reach replica address " + replicaaddr + "! Exception Raised: ", ex)
-						deleteaddr(replicaaddr)
-			# End Broadcast
-			if newkey:
-				return res,201
-			else:
-				return res,200
+        causalmetadata = " ".join(updated_clock)
 
-	def delete(self,key):
-		print("(Log Message)[STORE] Initiating delete!")
+        #incorrect input
+        if not args["value"]:
+            res = {'error':'Value is missing', 'message': 'Error in PUT'}
+            return res,400
 
-		global causalmetadata
-		global total_differences
-		replicaNumber = getReplicaNumber()
-		#replicaNumber is the index of the current replica
-		#we can use this with the vector clock to figure out which one
-		parser = reqparse.RequestParser(bundle_errors=True)
-		parser.add_argument("causal-metadata", type=str)
-		parser.add_argument("node", type=int)
-		args = parser.parse_args()
-		print(args, flush=True)
+        #key is too long
+        if len(key)>50:
+            res = {'error':'Key is too long', 'message': 'Error in PUT'}
+            return res,400
 
-		#parsing meta-data
-		meta = str(args["causal-metadata"])
+        # Confirmed to be a valid key! Create a newkey boolean and either add or replace.
+        newkey = False
+        if key not in dic:
+            dic[key] = args["value"]
+            res = {"message":"Added successfully", "causal-metadata": causalmetadata}
+            newkey = True
+        else:
+            # To prevent constant repetitive put calls between replicas...
+            originalvalue = dic.get(key)
+            if originalvalue == args["value"]:
+                # Nothing changed. Do not broadcast.
+                res = {"message":"Updated successfully", "causal-metadata": causalmetadata}
+                return res,200
+            else:
+                # Something changed!
+                dic[key] = args["value"]
+                res = {"message":"Updated successfully", "causal-metadata": causalmetadata}
+                newkey = False
 
-		#case of first put
-		#other requests with an empty causal-metadata is illegal
-		if meta == "":
-			meta = causalmetadata
 
-		print("meta: ", meta,flush=True)
-		received_clock = meta.split(" ")
-		print("received clock: ", received_clock, flush=True)
-		current_clock = causalmetadata.split(" ")
-		print("current_clock: ", current_clock, flush=True)
-		print("replicaNumber: ", replicaNumber)
+        # Regardless of newkey, Broadcast the same PUT request to all other replicas in the view save for itself.
+        valuevar = str(args["value"])
+        payload = {"value" : valuevar, "causal-metadata": causalmetadata, "node":1}
 
-		#Soft copy of the vector clocks to work with
-		currentCopy = current_clock.copy()
-		receivedCopy = received_clock.copy()
-		print("Current copy, received copy:", currentCopy, receivedCopy)
-		updatedVC = checkVersion(currentCopy, receivedCopy, replicaNumber, key)
-		print("updated VC", updatedVC)
 
-		# replica was behind, set the current clock to the clock received from the other replica
-		if updatedVC:
-			current_clock = updatedVC
-		
-		# There was no conflict, set the indivdual replica clock
-		clock = int(current_clock[replicaNumber])
-		
-		newclock = int(received_clock[replicaNumber])
-		
-		#make sure the nodes are not incrementing their own VC's, only the replica comminucating with the client should increment
-		if not args["node"]:
-			clock +=1
-			current_clock[replicaNumber] = str(clock)
+        # only the the replica dealing with the client should broadcast the request
+        if not args["node"]:
+            print("  - Broadcasting PUT to other replicas...")
+            print("Payload: ", payload)
+            for replicaaddr in viewstore:
+                if replicaaddr != socketaddr:
+                    print("  - Sending PUT to " + replicaaddr + "...")
+                    try:
+                        request = req.put("http://" + replicaaddr +"/key-value-store/"+str(key), data=payload, timeout=timeoutduration)
+                        print("   - Success!")
+                    except req.exceptions.RequestException as ex:
+                        # WARNING, a replica in the view could not be reached! time to call key-value-store-view DELETE.
+                        print("   WARNING - Unable to reach replica address " + replicaaddr + "! Exception Raised: ", ex)
+                        deleteaddr(replicaaddr)
+            # End Broadcast
+            if newkey:
+                return res,201
+            else:
+                return res,200
 
-		#then update point-wise max
-		updated_clock = [max(value) for value in zip(current_clock, received_clock)]
-		print("updated clock:", updated_clock,flush=True)
+    def delete(self,key):
+        print("(Log Message)[STORE] Initiating delete!")
 
-		causalmetadata = " ".join(updated_clock)
+        global causalmetadata
+        global total_differences
+        replicaNumber = getReplicaNumber()
+        #replicaNumber is the index of the current replica
+        #we can use this with the vector clock to figure out which one
+        parser = reqparse.RequestParser(bundle_errors=True)
+        parser.add_argument("causal-metadata", type=str)
+        parser.add_argument("node", type=int)
+        args = parser.parse_args()
+        print(args, flush=True)
 
-		#key is too long
-		if len(key)>50:
-			res = {'error':'Key is too long', 'message': 'Error in DELETE'}
-			return res,400
-		
-		payload = {"causal-metadata": causalmetadata, "node":1}
-		if key in dic:
-			del dic[key]
+        #parsing meta-data
+        meta = str(args["causal-metadata"])
 
-			# Broadcast same DELETE request to all other replicas in the view save for itself.
-			if not args["node"]: 
-				print("  - Broadcasting DELETE to other replicas...")
-				for replicaaddr in viewstore:
-					if replicaaddr != socketaddr:
-						print("  - Sending DELETE to " + replicaaddr + "...")
-						try:
-							#TO-DO change req.delete to a request("delete", URL, data = metadata, timeout=timeoutduration)
-							request = req.delete("http://" + replicaaddr + "/key-value-store/" + str(key), data = payload, timeout=timeoutduration)
-							print("   - Done!")
-						except Timeout as ex:
-							# WARNING, a replica in the view could not be reached! time to call key-value-store-view DELETE.
-							print("   WARNING - Unable to reach replica address " + replicaaddr + "! Exception Raised: ", ex)
-							deleteaddr(replicaaddr)
+        #case of first put
+        #other requests with an empty causal-metadata is illegal
+        if meta == "":
+            meta = causalmetadata
 
-				return {"message":"Deleted successfully", "causal-metadata": causalmetadata},200
-		
-		if key not in dic:
-			return {'doesExist': False,'error':'Key does not exist','message':'Error in DELETE'},404
+        print("meta: ", meta,flush=True)
+        received_clock = meta.split(" ")
+        print("received clock: ", received_clock, flush=True)
+        current_clock = causalmetadata.split(" ")
+        print("current_clock: ", current_clock, flush=True)
+        print("replicaNumber: ", replicaNumber)
+
+        #Soft copy of the vector clocks to work with
+        currentCopy = current_clock.copy()
+        receivedCopy = received_clock.copy()
+        print("Current copy, received copy:", currentCopy, receivedCopy)
+        updatedVC = checkVersion(currentCopy, receivedCopy, replicaNumber, key)
+        print("updated VC", updatedVC)
+
+        # replica was behind, set the current clock to the clock received from the other replica
+        if updatedVC:
+            current_clock = updatedVC
+
+        # There was no conflict, set the indivdual replica clock
+        clock = int(current_clock[replicaNumber])
+
+        newclock = int(received_clock[replicaNumber])
+
+        #make sure the nodes are not incrementing their own VC's, only the replica comminucating with the client should increment
+        if not args["node"]:
+            clock +=1
+            current_clock[replicaNumber] = str(clock)
+
+        #then update point-wise max
+        updated_clock = [max(value) for value in zip(current_clock, received_clock)]
+        print("updated clock:", updated_clock,flush=True)
+
+        causalmetadata = " ".join(updated_clock)
+
+        #key is too long
+        if len(key)>50:
+            res = {'error':'Key is too long', 'message': 'Error in DELETE'}
+            return res,400
+
+        payload = {"causal-metadata": causalmetadata, "node":1}
+        if key in dic:
+            del dic[key]
+
+            # Broadcast same DELETE request to all other replicas in the view save for itself.
+            if not args["node"]:
+                print("  - Broadcasting DELETE to other replicas...")
+                for replicaaddr in viewstore:
+                    if replicaaddr != socketaddr:
+                        print("  - Sending DELETE to " + replicaaddr + "...")
+                        try:
+                            #TO-DO change req.delete to a request("delete", URL, data = metadata, timeout=timeoutduration)
+                            request = req.delete("http://" + replicaaddr + "/key-value-store/" + str(key), data = payload, timeout=timeoutduration)
+                            print("   - Done!")
+                        except Timeout as ex:
+                            # WARNING, a replica in the view could not be reached! time to call key-value-store-view DELETE.
+                            print("   WARNING - Unable to reach replica address " + replicaaddr + "! Exception Raised: ", ex)
+                            deleteaddr(replicaaddr)
+
+                return {"message":"Deleted successfully", "causal-metadata": causalmetadata},200
+
+        if key not in dic:
+            return {'doesExist': False,'error':'Key does not exist','message':'Error in DELETE'},404
 
 # /key-value-store-view
 class ViewStore(Resource):
-	def get(self):
-		print("(Log Message)[VIEWSTORE] Initiating get!")
-		viewstring = ','.join(viewstore)
-		return {"message":"View retrieved successfully","view":viewstring}, 200
+    def get(self):
+        print("(Log Message)[VIEWSTORE] Initiating get!")
+        viewstring = ','.join(viewstore)
+        return {"message":"View retrieved successfully","view":viewstring}, 200
 
-	def put(self):
-		global causalmetadata
-		global replicaNumber
-		print("(Log Message)[VIEWSTORE] Initiating put!")
-		parser = reqparse.RequestParser(bundle_errors=True)
-		parser.add_argument("socket-address", type=str)
-		args = parser.parse_args()
+    def put(self):
+        global causalmetadata
+        global replicaNumber
+        print("(Log Message)[VIEWSTORE] Initiating put!")
+        parser = reqparse.RequestParser(bundle_errors=True)
+        parser.add_argument("socket-address", type=str)
+        args = parser.parse_args()
 
-		targetsocket= args["socket-address"]
-		if targetsocket in viewstore:
-			return {"error":"Socket address already exists in the view","message":"Error in PUT"},404
-		else:
-			viewstore.append(targetsocket)
-			viewstore.sort()
-			causaldata = causalmetadata.split(" ")
-			print("causal data after adding new replica: ", causaldata, flush=True)
-			if len(causaldata) < len(viewstore):
-				print("There is more replicas than causaldata")
-				causaldata.append("0")
-				causalmetadata = " ".join(causaldata)
-				print("new causalmetadata: ", causalmetadata, flush=True)
-			return {"message":"Replica added successfully to the view"}, 201
+        targetsocket= args["socket-address"]
+        if targetsocket in viewstore:
+            return {"error":"Socket address already exists in the view","message":"Error in PUT"},404
+        else:
+            viewstore.append(targetsocket)
+            viewstore.sort(key = sort_key)
+            causaldata = causalmetadata.split(" ")
+            print("causal data after adding new replica: ", causaldata, flush=True)
+            if len(causaldata) < len(viewstore):
+                print("There is more replicas than causaldata")
+                causaldata.append("0")
+                causalmetadata = " ".join(causaldata)
+                print("new causalmetadata: ", causalmetadata, flush=True)
+            return {"message":"Replica added successfully to the view"}, 201
 
-	def delete(self):
-		global causalmetadata
-		global replicaNumber
-		print("(Log Message)[VIEWSTORE] Initiating delete!")
-		parser = reqparse.RequestParser(bundle_errors=True)
-		parser.add_argument("socket-address", type=str)
-		args = parser.parse_args()
+    def delete(self):
+        global causalmetadata
+        global replicaNumber
+        print("(Log Message)[VIEWSTORE] Initiating delete!")
+        parser = reqparse.RequestParser(bundle_errors=True)
+        parser.add_argument("socket-address", type=str)
+        args = parser.parse_args()
 
-		targetsocket= args["socket-address"]
-		if targetsocket in viewstore:
-			viewstore.remove(targetsocket)
-			return {"message": "Replica deleted successfully from the view"}, 200
-	
-		return {"error":"Socket address does not exist in the view","message":"Error in DELETE"}, 404
+        targetsocket= args["socket-address"]
+        if targetsocket in viewstore:
+            viewstore.remove(targetsocket)
+            return {"message": "Replica deleted successfully from the view"}, 200
+
+        return {"error":"Socket address does not exist in the view","message":"Error in DELETE"}, 404
 
 # Used to get the KVS of a replica
 class KVS(Resource):
-	def get(self):
-		return dic
+    def get(self):
+        return dic
 
 class ShardIDs(Resource):
-	#return all shard id's
-	def get(self):
-		return {"message":"Shard IDs retrieved successfully","shard-ids": getShards()},200
+    #return all shard id's
+    def get(self):
+        return {"message":"Shard IDs retrieved successfully","shard-ids": getShards()},200
 
 class NodeShardId(Resource):
-	#TODO, return which shard the node belongs to
-	def get(self):
-		return None
+    #TODO, return which shard the node belongs to
+    def get(self):
+        return shard_id
+
+class ShardIdMembers(Resource):
+    #URL Format: "/key-value-store-shard/shard-id-members/<shard-id>"
+    # return all members of a shard id
+    def get(self, id):
+        return None
+
+class ShardKeyCount(Resource):
+    #URL Format: "/key-value-store-shard/shard-id-key-count/<shard-id>"
+    # return # of keys stored in the shard
+    def get(self, id):
+        return None
+
+#TO-DO:
+# This only puts to the specific node-socket-address receiving the PUT request
+# Need to broadcast this put to the entire VIEW or only the shard
+class ShardAddMember(Resource):
+    #URL Format: "/key-value-store-shard/add-member/<shard-id>"
+    # takes a PUT request and adds the socket-address to a shard
+    def put(self, id):
+        shardid = id
+        parser = reqparse.RequestParser(bundle_errors=True)
+        parser.add_argument("socket-address", type=str)
+        args = parser.parse_args()
+
+        targetsocket = args["socket-address"]
+        if targetsocket not in viewstore:
+            print("[WARNING]: socket address of the node is currently not in the view", flush=True)
+        if shardid not in shards:
+            return {"message":"ERROR: shard-id does not exist"}, 404
+        if shardid not in shard_members[shardid]:
+            shard_members[shardid].append(targetsocket)
+            return 200
+        else:
+            return {"message":"Node is already in the shard"}, 200
+
+
+class ShardReshard(Resource):
+    #URL Format: "/key-value-store-shard/reshard"
+    # reshards id
+    def put(self):
+        return None
 
 # Used to sync a replica in the case that it goes down and comes back online
 def instantiateReplica(viewstore, socketaddress):
-	missingTheReplica = []
-	getaddress = None
-	for address in viewstore:
-		print("Working on: ", address)
-		if address != socketaddress:
-			print("trying to broadcast...")
-			try:
-				response = req.get("http://" + address + "/key-value-store-view", timeout=10)
-				response = response.json()
-				print("response: ", response)
-				responseView = response['view']
-				for views in responseView:
-					if socketaddress not in views:
-						if address not in missingTheReplica:
-							missingTheReplica.append(address)
+    missingTheReplica = []
+    getaddress = None
+    for address in viewstore:
+        print("Working on: ", address)
+        if address != socketaddress:
+            print("trying to broadcast...")
+            try:
+                response = req.get("http://" + address + "/key-value-store-view", timeout=10)
+                response = response.json()
+                print("response: ", response)
+                responseView = response['view']
+                for views in responseView:
+                    if socketaddress not in views:
+                        if address not in missingTheReplica:
+                            missingTheReplica.append(address)
 
-			except req.exceptions.RequestException as ex:
-				print("Could not get a response")
-				print("It may be first run of the program OR something is terribly wrong")
-	print("Replicas that need it: ", missingTheReplica)
+            except req.exceptions.RequestException as ex:
+                print("Could not get a response")
+                print("It may be first run of the program OR something is terribly wrong")
+    print("Replicas that need it: ", missingTheReplica)
 
-	#To insert the replica's view to the ones that need it
-	for addy in missingTheReplica:
-		try:
-			#Tries to send a request
-			print("Sending put request....to: ", addy)
-			payload = {"socket-address" : socketaddress}
-			requestReplica = req.put("http://" + addy + "/key-value-store-view", data=payload, timeout=10)
-			print("Reponse received from ", addy, " and response is: ", requestReplica.json())
-		except req.exceptions.RequestException as xd:
-			print("Could not send a PUT to ", addy)
-			print("Boohoo :(")
-	#now get the KVS data
-	print("getting KVS from a replica")
-	getaddress = viewstore[0]
-	print("dictionary: ", dic, flush=True)
-	if not dic:
-		try:
-			for address in viewstore:
-				if address != socketaddress:
-					kvs = req.get("http://" + address + "/kvs", timeout=5)
-					kvs = kvs.json()
-					print("Request response from kvs: ", kvs, flush=True)
-					if kvs:
-						print("adding dictionary from KVS to self")
-						for key in kvs:
-							dic[key] = kvs[key]
-		except req.exceptions.RequestException as rex:
-			print(rex, flush=True)
-			print("Could not GET to the first replica in viewstore", flush=True)
-	print("SUCCESS!")
+    #To insert the replica's view to the ones that need it
+    for addy in missingTheReplica:
+        try:
+            #Tries to send a request
+            print("Sending put request....to: ", addy)
+            payload = {"socket-address" : socketaddress}
+            requestReplica = req.put("http://" + addy + "/key-value-store-view", data=payload, timeout=10)
+            print("Reponse received from ", addy, " and response is: ", requestReplica.json())
+        except req.exceptions.RequestException as xd:
+            print("Could not send a PUT to ", addy)
+            print("Boohoo :(")
+    #now get the KVS data
+    print("getting KVS from a replica")
+    getaddress = viewstore[0]
+    print("dictionary: ", dic, flush=True)
+    if not dic:
+        try:
+            for address in viewstore:
+                if address != socketaddress:
+                    kvs = req.get("http://" + address + "/kvs", timeout=5)
+                    kvs = kvs.json()
+                    print("Request response from kvs: ", kvs, flush=True)
+                    if kvs:
+                        print("adding dictionary from KVS to self")
+                        for key in kvs:
+                            dic[key] = kvs[key]
+        except req.exceptions.RequestException as rex:
+            print(rex, flush=True)
+            print("Could not GET to the first replica in viewstore", flush=True)
+    print("SUCCESS!")
 
 def getShards():
-	return list(hr.get_nodes())
+    return list(hr.get_nodes())
+
+
+
+def assignShards(viewlist,shardCount):
+    shardcount = int(shardCount)
+    length = len(viewlist)
+    if length // int(shardCount) == 1:
+        print("Illegal sharding, must have at least two nodes per shard")
+        return -1
+    viewlist = np.array_split(viewlist,shardcount)
+    print("view list split..: ", viewlist)
+    for i in range(len(viewlist)):
+        viewlist[i] = viewlist[i].tolist()
+    print("array split into ", shardcount, "shards:")
+    print(viewlist)
+    print("\n\n\n")
+    return viewlist
 
 if __name__ == "__main__":
-	print("Hello there! CSE_Assignment3 replica instance initiated...")
+    print("Hello there! CSE_Assignment3 replica instance initiated...")
 
-	#to ensure that the thread running has the required environment variables
-	if 'SOCKET_ADDRESS' in os.environ and os.environ['SOCKET_ADDRESS'] != "":
-		socketaddr = os.environ['SOCKET_ADDRESS']
-		print("SOCKET_ADDRESS Docker env variable found! read: ", socketaddr)
-	else:
-		print("[ERROR] SOCKET_ADDRESS Docker env variable not found!")
+    #to ensure that the thread running has the required environment variables
+    if 'SOCKET_ADDRESS' in os.environ and os.environ['SOCKET_ADDRESS'] != "":
+        socketaddr = os.environ['SOCKET_ADDRESS']
+        print("SOCKET_ADDRESS Docker env variable found! read: ", socketaddr)
+    else:
+        print("[ERROR] SOCKET_ADDRESS Docker env variable not found!")
 
-	print("socket addr: ", socketaddr, flush=True)
+    print("socket addr: ", socketaddr, flush=True)
 
 
-	#to ensure that the thread running has the required environment variables
-	if 'VIEW' in os.environ and os.environ['VIEW'] != "":
-		view = os.environ['VIEW']
-		viewstore = view.split(",")
-		print("VIEW Docker env variable found! read: ", viewstore)
-	else:
-		print("[ERROR] VIEW Docker env variable not found!")
+    #to ensure that the thread running has the required environment variables
+    if 'VIEW' in os.environ and os.environ['VIEW'] != "":
+        view = os.environ['VIEW']
+        viewstore = view.split(",")
+        viewstore.sort(key = sort_key)
+        print("VIEW Docker env variable found! read: ", viewstore)
+    else:
+        print("[ERROR] VIEW Docker env variable not found!")
 
-	shardcnt=""
-	#check to see if shard count is present. If not, we know that the node was not instantiated on startup
-	if "SHARD_COUNT" in os.environ and os.environ["SHARD_COUNT"]!="":
-		shardcnt = os.environ["SHARD_COUNT"]
-	
-	clock = []
-	for addy in viewstore:
-		clock.append("0")
+    shardcnt=""
+    #check to see if shard count is present. If not, we know that the node was not instantiated on startup
+    if "SHARD_COUNT" in os.environ and os.environ["SHARD_COUNT"]!="":
+        shardcnt = os.environ["SHARD_COUNT"]
+    nodes = None
+    if shardcnt != "":
+        #Get node index from view list
+        nodeidx = viewstore.index(socketaddr)
+        #split the nodes in the viewlist into shards of index 0 to n
+        nodes = assignShards(viewstore,shardcnt)
+        #cannot partition nodes into shards if it cannot have at least 2 nodes per shard
+        if nodes == -1:
+            print("Error stated above")
+        else:
+            #range starts from 0
+            for shard in range(int(shardcnt)):
+                if socketaddr in nodes[shard]:
+                    shard_id = shard
+    clock = []
+    for addy in viewstore:
+        clock.append("0")
 
-	causalmetadata = " ".join(clock)
-	# Main instance. 
-	print(" Starting replica instance...")
-	ip_add = "0.0.0.0"
+    causalmetadata = " ".join(clock)
+    # Main instance.
+    print(" Starting replica instance...")
+    ip_add = "0.0.0.0"
 
-	hr = HashRing()
+    hr = HashRing()
 
-	#add the shards to the hashring
-	for i in range(int(shardcnt)):
-		hr.add_node("shard"+str(i))
-		shards.append("shard"+str(i))
+    #add the shards to the hashring
+    for i in range(int(shardcnt)):
+        hr.add_node("shard"+str(i))
+        shards.append("shard"+str(i))
+    #assign all addresses to a shard
+    #if socketaddr is part of the shard, then assign shardid to the node
+    if nodes != None:
+        for i in range(int(shardcnt)):
+            shard_members["shard"+str(i)] = nodes[i]
+            if socketaddr in shard_members["shard"+str(i)]:
+                shard_id = "shard"+str(i)
 
-	print("shards created are", getShards())
 
-	instantiateReplica(viewstore, socketaddr)
-	print("instatiating..")
 
-	
+    print("shards created are", getShards())
 
-	api.add_resource(Store, "/key-value-store/<key>")
-	api.add_resource(ViewStore, "/key-value-store-view")
-	api.add_resource(KVS, "/kvs")
-	api.add_resource(ShardIDs, "/shard-ids")
-	api.add_resource(NodeShardId, "/node-shard-id")
-	app.run(host=ip_add,port=8085)
+    instantiateReplica(viewstore, socketaddr)
+    print("instatiating..")
+
+
+
+    api.add_resource(Store, "/key-value-store/<key>")
+    api.add_resource(ViewStore, "/key-value-store-view")
+    api.add_resource(KVS, "/kvs")
+    api.add_resource(ShardIDs, "/key-value-store-shard/shard-ids")
+    api.add_resource(NodeShardId, "/key-value-store-shard/node-shard-id")
+    api.add_resource(ShardIdMembers, "/key-value-store-shard/shard-id-members/<id>")
+    api.add_resource(ShardKeyCount, "/key-value-store-shard/shard-id-key-count/<id>")
+    api.add_resource(ShardAddMember, "/key-value-store-shard/add-member/<id>")
+    api.add_resource(ShardReshard, "/key-value-store-shard/reshard")
+    app.run(host=ip_add,port=8085)
