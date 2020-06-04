@@ -490,16 +490,56 @@ class ShardIDs(Resource):
     def get(self):
         return {"message":"Shard IDs retrieved successfully","shard-ids": getShards()},200
 
+# Pretty self-explanatory - Returns any given node's shard_id. 
 class NodeShardId(Resource):
-    #TODO, return which shard the node belongs to
     def get(self):
-        return shard_id
+        print("(Log Message)[SHARD] Initiating node-shard-id GET!")
+        return {"message":"Shard ID of the node retrieved successfully","shard-id":shard_id}, 200
 
+# Aux service not specified in the spec, for use in ShardIdMembers.
+# For any node, return its shard_members. 
+class NodeShardMembers(Resource):
+    def get(self):
+        print("(Log Message)[SHARD] Initiating node-shard-members GET!")
+        return {"message":"Shard Members of the node retrieved successfully","shard-id-members":shard_members}, 200
+
+# Given any shard-id, gets all of the members of that shard-id. 
+# Mechanism:
+# = Check if current shard is the requested shard. if so, return shard_members. 
+# = Else, we have to find a node that is part of the shard. Iterate over all
+# view socket addresses that are not present in shard_members, executing
+# GET NodeShardId for each socket address until the answer matches with requested.
+# = With that same address, execute GET NodeShardIdMembers (This is an aux service
+# not specified in the spec.)
 class ShardIdMembers(Resource):
     #URL Format: "/key-value-store-shard/shard-id-members/<shard-id>"
-    # return all members of a shard id
     def get(self, id):
-        return None
+        print("(Log Message)[SHARD] Initiating shard-id-members GET!")
+        if id == shard_id:
+            print("(Log Message)[SHARD] passed id is the same as host node's id!")
+            return {"message":"Members of shard ID retrieved successfully","shard-id-members":shard_members}, 200
+        else:
+            print("(Log Message)[SHARD] passed id is NOT the same as host node's id, beginning search.")
+            for replicaaddr in viewstore:
+                if replicaaddr not in shard_members:
+                    print("  - Sending GET to " + replicaaddr + "...")
+                    try:
+                        request = req.get("http://" + replicaaddr +"/key-value-store-shard/node-shard-id", timeout=timeoutduration)
+                        print("   - Success! Got a response of " + str(request.text))
+                        data = request.json()
+                        if data['shard-id'] == id:
+                            print("  - Sending GET to " + replicaaddr + "...")
+                            # Found a hit! Get this address's shard members. 
+                            request = req.get("http://" + replicaaddr +"/key-value-store-shard/node-shard-members", timeout=timeoutduration)
+                            print("   - Success! Got a response of " + str(request.text))
+                            data = request.json()
+                            # All done! Return it. 
+                            return {"message":"Members of shard ID retrieved successfully","shard-id-members":data['shard-id-members']}, 200
+                    except req.exceptions.RequestException as ex:
+                        # WARNING, a replica in the view could not be reached! time to call key-value-store-view DELETE.
+                        print("   WARNING - Unable to reach replica address " + replicaaddr + "! Exception Raised: ", ex)
+                        deleteaddr(replicaaddr)
+            return {"error":"Shard address does not exist!","message":"Error in GET"}, 404
 
 class ShardKeyCount(Resource):
     #URL Format: "/key-value-store-shard/shard-id-key-count/<shard-id>"
@@ -545,11 +585,43 @@ class ShardAddMember(Resource):
 # = Redistributes keys 
 class ShardReshard(Resource):
     def put(self):
+        print("(Log Message)[SHARD] Initiating reshard PUT!")
         # **Collect all dictionaries from shards other than own shard (which node irrelevant)**
+
+        # Create dictionary of all keys and values, initalized by current shard dictionary.
+        aggregatedic = dic
+        # With list of all shard ID's, shards, iterate.
+        for id in shards:
+            if id != shard_id: # If not current shard
+                print("Querying dictionary from shard '" + str(shard)+"'.")
+                # For each shard, get list of all nodes in shard by calling same node's class function.
+                request = ShardIdMembers.get(self, id)
+                id_shard_members = request.json()['shard-id-members']
+                replicaaddr = id_shard_members[0] # It doesn't matter which address we go for in the shard.
+                # Get all keys (KVS resource) from any node in the shard. Append to current dictionary.
+                print("  - Sending GET to " + replicaaddr + "...")
+                try:
+                    request = req.get("http://" + replicaaddr +"/kvs", timeout=timeoutduration)
+                    print("   - Success! Got a response of " + str(request.text))
+                    # Append gotten key-value store to current dictionary
+                    aggregatedic = {**aggregatedic, **request.text}
+                    print("Dic of shard "+ str(shard) + " added. Current combined dictionary: " + str(aggregatedic))
+                except req.exceptions.RequestException as ex:
+                    # WARNING, a replica in the view could not be reached! time to call key-value-store-view DELETE.
+                    print("   WARNING - Unable to reach replica address " + replicaaddr + "! Exception Raised: ", ex)
+                    deleteaddr(replicaaddr)
+        print("Complete dictionary gathered!")
         
         # **Reshard existing shards.**
-        
+
+        # Call existing assignshards() class to reassign shards. 
+
         # **Redistribute keys, overwriting existing.**
+        # Break up dictionary of keys evenly (using hashing(?))
+        # Assign keys to all shards
+        # For each shard, assign subset of keys to each member in shard. 
+
+        # All done!
         return None
 
 # Used to sync a replica in the case that it goes down and comes back online
@@ -707,4 +779,6 @@ if __name__ == "__main__":
     api.add_resource(ShardKeyCount, "/key-value-store-shard/shard-id-key-count/<id>")
     api.add_resource(ShardAddMember, "/key-value-store-shard/add-member/<id>")
     api.add_resource(ShardReshard, "/key-value-store-shard/reshard")
+    # Aux resource
+    api.add_resource(NodeShardMembers, "/key-value-store-shard/node-shard-members")
     app.run(host=ip_add,port=8085)
