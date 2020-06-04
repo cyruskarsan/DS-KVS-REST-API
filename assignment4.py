@@ -43,7 +43,6 @@ NumberOfReplicas = None
 shards = []
 shard_id = None
 shard_members = {}
-shardcnt=""
 
 # Used to delete an address from viewstore and broadcast that 
 # address to the rest of the replicas. This function is triggered by 
@@ -504,6 +503,20 @@ class NodeShardMembers(Resource):
         print("(Log Message)[SHARD] Initiating node-shard-members GET!")
         return {"message":"Shard Members of the node retrieved successfully","shard-id-members":shard_members}, 200
 
+# Aux service not specified in the spec, for use in ShardReshard. 
+# For any node, given the passed JSON object in the PUT call, 
+# overwrite the existing dictionary. 
+class KVSOverwite(Resource):
+    def put(self):
+        print("(Log Message)[SHARD] Initiating KVSOverwrite PUT!")
+        parser = reqparse.RequestParser(bundle_errors=True)
+        parser.add_argument("socket-address", type=str)
+        args = parser.parse_args()
+        kvs = args["kvs"] # get kvs to overwrite existing dictionary. 
+        print("Overwiting existing dictionary:\n" + str(dic) + "\nwith passed kvs:\n" + str(kvs))
+        dic = kvs
+        return {"message":"Updated successfully"}, 200
+
 # Given any shard-id, gets all of the members of that shard-id. 
 # Mechanism:
 # = Check if current shard is the requested shard. if so, return shard_members. 
@@ -586,12 +599,13 @@ class ShardAddMember(Resource):
 # = Redistributes keys 
 class ShardReshard(Resource):
     def put(self):
+        global shard_id
+        global shards
         print("(Log Message)[SHARD] Initiating reshard PUT!")
         parser = reqparse.RequestParser(bundle_errors=True)
         parser.add_argument("socket-address", type=str)
         args = parser.parse_args()
-
-        new_shardcnt= args["shard-count"]
+        shardcnt= args["shard-count"]
 
         # **Collect all dictionaries from shards other than own shard (which node irrelevant)**
 
@@ -600,7 +614,7 @@ class ShardReshard(Resource):
         # With list of all shard ID's, shards, iterate.
         for id in shards:
             if id != shard_id: # If not current shard
-                print("Querying dictionary from shard '" + str(shard)+"'.")
+                print("Querying dictionary from shard '" + str(id)+"'.")
                 # For each shard, get list of all nodes in shard by calling same node's class function.
                 request = ShardIdMembers.get(self, id)
                 id_shard_members = request.json()['shard-id-members']
@@ -612,7 +626,7 @@ class ShardReshard(Resource):
                     print("   - Success! Got a response of " + str(request.text))
                     # Append gotten key-value store to current dictionary
                     aggregatedic = {**aggregatedic, **request.text}
-                    print("Dic of shard "+ str(shard) + " added. Current combined dictionary: " + str(aggregatedic))
+                    print("Dic of shard "+ str(id) + " added. Current combined dictionary: " + str(aggregatedic))
                 except req.exceptions.RequestException as ex:
                     # WARNING, a replica in the view could not be reached! time to call key-value-store-view DELETE.
                     print("   WARNING - Unable to reach replica address " + replicaaddr + "! Exception Raised: ", ex)
@@ -621,18 +635,63 @@ class ShardReshard(Resource):
         
         # **Reshard existing shards.**
 
-        # Call existing assignshards() class to reassign shards with new count. 
-        assignShards(viewstore,new_shardcnt)
+        # Copied code from initialization. 
+        # Reset current information for this node. 
+        shards = []
+        shard_id = None
+        shard_members = {}
+        nodes = None
+
+        if shardcnt != "":
+            #Get node index from view list
+            nodeidx = viewstore.index(socketaddr)
+            #split the nodes in the viewlist into shards of index 0 to n
+            nodes = assignShards(viewstore,shardcnt)
+            #cannot partition nodes into shards if it cannot have at least 2 nodes per shard
+            if nodes == -1:
+                print("Error stated above")
+            else:
+                #range starts from 0
+                for shard in range(int(shardcnt)):
+                    if socketaddr in nodes[shard]:
+                        shard_id = shard
+        hr = HashRing()
+        #add the shards to the hashring
+        for i in range(int(shardcnt)):
+            hr.add_node("shard"+str(i))
+            shards.append("shard"+str(i))
+        #assign all addresses to a shard
+        #if socketaddr is part of the shard, then assign shardid to the node
+        if nodes != None:
+            for i in range(int(shardcnt)):
+                shard_members["shard"+str(i)] = nodes[i]
+                if socketaddr in shard_members["shard"+str(i)]:
+                    shard_id = "shard"+str(i)
+
+        # TODO: Apply effects to ALL other shards!
 
         # **Redistribute keys, overwriting existing.**
 
-        # REBALANCING - Partitioning by hash of key and consistent hashing.  Ensure that:
-        # 1) Each key belongs to exactly one shard 2) Keys are mostly evenly distributed,
-        # 3) Any node should be able to determine what shard a key belongs to (without having 
-        # to query every shard for it)
+        # TODO: Requires SAME key-to-shard mechanism implemented in the PUT call for key-value-store. 
+        # Can copy that code down here and use it to create an array of dictionaries to apply to
+        # each shard, and then call the auxiliary functions to overwrite and apply the devised 
+        # schema.  
 
-        # Assign keys to all shards
-        # For each shard, assign subset of keys to each member in shard. 
+        for id in shards: 
+            # TODO: This should be the correct dictionary applicable to this particular id. Currently empty. 
+            payload = {"kvs": {}}
+            # For each shard, get list of all nodes in shard by calling same node's class function.
+            request = ShardIdMembers.get(self, id)
+            id_shard_members = request.json()['shard-id-members']
+            for replicaaddr in id_shard_members:
+                print("  - Sending PUT to " + replicaaddr + "...")
+                try:
+                    request = req.put("http://" + replicaaddr +"/kvs/overwrite", data=payload, timeout=timeoutduration)
+                    print("   - Success!")
+                except req.exceptions.RequestException as ex:
+                    # WARNING, a replica in the view could not be reached! time to call key-value-store-view DELETE.
+                    print("   WARNING - Unable to reach replica address " + replicaaddr + "! Exception Raised: ", ex)
+                    deleteaddr(replicaaddr)
 
         # All done!
         return None
@@ -712,7 +771,10 @@ def assignShards(viewlist,shardCount):
     return viewlist
 
 if __name__ == "__main__":
-    print("Hello there! CSE_Assignment3 replica instance initiated...")
+    print("Hello there! CSE_Assignment4 replica instance initiated...")
+    # Main instance.
+    print(" Starting replica instance...")
+    ip_add = "0.0.0.0"
 
     #to ensure that the thread running has the required environment variables
     if 'SOCKET_ADDRESS' in os.environ and os.environ['SOCKET_ADDRESS'] != "":
@@ -720,11 +782,7 @@ if __name__ == "__main__":
         print("SOCKET_ADDRESS Docker env variable found! read: ", socketaddr)
     else:
         print("[ERROR] SOCKET_ADDRESS Docker env variable not found!")
-
     print("socket addr: ", socketaddr, flush=True)
-
-
-    #to ensure that the thread running has the required environment variables
     if 'VIEW' in os.environ and os.environ['VIEW'] != "":
         view = os.environ['VIEW']
         viewstore = view.split(",")
@@ -732,10 +790,15 @@ if __name__ == "__main__":
         print("VIEW Docker env variable found! read: ", viewstore)
     else:
         print("[ERROR] VIEW Docker env variable not found!")
-
     #check to see if shard count is present. If not, we know that the node was not instantiated on startup
     if "SHARD_COUNT" in os.environ and os.environ["SHARD_COUNT"]!="":
         shardcnt = os.environ["SHARD_COUNT"]
+    
+    clock = []
+    for addy in viewstore:
+        clock.append("0")
+    causalmetadata = " ".join(clock)
+
     nodes = None
     if shardcnt != "":
         #Get node index from view list
@@ -750,15 +813,6 @@ if __name__ == "__main__":
             for shard in range(int(shardcnt)):
                 if socketaddr in nodes[shard]:
                     shard_id = shard
-    clock = []
-    for addy in viewstore:
-        clock.append("0")
-
-    causalmetadata = " ".join(clock)
-    # Main instance.
-    print(" Starting replica instance...")
-    ip_add = "0.0.0.0"
-
     hr = HashRing()
 
     #add the shards to the hashring
@@ -776,21 +830,20 @@ if __name__ == "__main__":
 
 
     print("shards created are", getShards())
-
     instantiateReplica(viewstore, socketaddr)
     print("instatiating..")
 
 
-
     api.add_resource(Store, "/key-value-store/<key>")
     api.add_resource(ViewStore, "/key-value-store-view")
-    api.add_resource(KVS, "/kvs")
     api.add_resource(ShardIDs, "/key-value-store-shard/shard-ids")
     api.add_resource(NodeShardId, "/key-value-store-shard/node-shard-id")
     api.add_resource(ShardIdMembers, "/key-value-store-shard/shard-id-members/<id>")
     api.add_resource(ShardKeyCount, "/key-value-store-shard/shard-id-key-count/<id>")
     api.add_resource(ShardAddMember, "/key-value-store-shard/add-member/<id>")
     api.add_resource(ShardReshard, "/key-value-store-shard/reshard")
-    # Aux resource
+    # Aux resources
     api.add_resource(NodeShardMembers, "/key-value-store-shard/node-shard-members")
+    api.add_resource(KVS, "/kvs")
+    api.add_resource(KVSOverwite, "/kvs/overwrite")
     app.run(host=ip_add,port=8085)

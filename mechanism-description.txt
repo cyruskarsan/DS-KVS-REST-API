@@ -10,3 +10,6 @@ description of the mechanism you implemented in the mechanism-description.txt fi
  You can choose any resharding mechanism as long as it meets the
 requirement of having at least two nodes in each shard. You must give a description of your resharding
 mechanism in the mechanism-description.txt file.
+
+You need to provide a description of the key-to-shard mapping strategy you implement in the
+mechanism-description.txt file.
