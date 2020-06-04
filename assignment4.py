@@ -43,6 +43,7 @@ NumberOfReplicas = None
 shards = []
 shard_id = None
 shard_members = {}
+shardcnt=""
 
 # Used to delete an address from viewstore and broadcast that 
 # address to the rest of the replicas. This function is triggered by 
@@ -586,6 +587,12 @@ class ShardAddMember(Resource):
 class ShardReshard(Resource):
     def put(self):
         print("(Log Message)[SHARD] Initiating reshard PUT!")
+        parser = reqparse.RequestParser(bundle_errors=True)
+        parser.add_argument("socket-address", type=str)
+        args = parser.parse_args()
+
+        new_shardcnt= args["shard-count"]
+
         # **Collect all dictionaries from shards other than own shard (which node irrelevant)**
 
         # Create dictionary of all keys and values, initalized by current shard dictionary.
@@ -614,10 +621,16 @@ class ShardReshard(Resource):
         
         # **Reshard existing shards.**
 
-        # Call existing assignshards() class to reassign shards. 
+        # Call existing assignshards() class to reassign shards with new count. 
+        assignShards(viewstore,new_shardcnt)
 
         # **Redistribute keys, overwriting existing.**
-        # Break up dictionary of keys evenly (using hashing(?))
+
+        # REBALANCING - Partitioning by hash of key and consistent hashing.  Ensure that:
+        # 1) Each key belongs to exactly one shard 2) Keys are mostly evenly distributed,
+        # 3) Any node should be able to determine what shard a key belongs to (without having 
+        # to query every shard for it)
+
         # Assign keys to all shards
         # For each shard, assign subset of keys to each member in shard. 
 
@@ -720,7 +733,6 @@ if __name__ == "__main__":
     else:
         print("[ERROR] VIEW Docker env variable not found!")
 
-    shardcnt=""
     #check to see if shard count is present. If not, we know that the node was not instantiated on startup
     if "SHARD_COUNT" in os.environ and os.environ["SHARD_COUNT"]!="":
         shardcnt = os.environ["SHARD_COUNT"]
