@@ -531,10 +531,25 @@ class ShardAddMember(Resource):
             return {"message":"Node is already in the shard"}, 200
 
 
+# Resharding class - to be excecuted by the administrator and not
+# done automatically, in two cases: either 1) there is only 1
+# node left in a shard or 2) new nodes have been added. Can
+# be used to change the shard-count. 
+
+# Takes a PUT request, expecting JSON content {"shard-count":<shard-count>}.
+
+# Mechanism design:
+# = Collects all dictionaries from all different existing shards and gathers
+# them in one dictionary.
+# = Reshards using the existing assignshards() class
+# = Redistributes keys 
 class ShardReshard(Resource):
-    #URL Format: "/key-value-store-shard/reshard"
-    # reshards id
     def put(self):
+        # **Collect all dictionaries from shards other than own shard (which node irrelevant)**
+        
+        # **Reshard existing shards.**
+        
+        # **Redistribute keys, overwriting existing.**
         return None
 
 # Used to sync a replica in the case that it goes down and comes back online
