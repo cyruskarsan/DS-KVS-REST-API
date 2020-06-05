@@ -7,11 +7,13 @@ from flask import Flask, jsonify, request, abort
 from flask_restful import Api, Resource, reqparse
 from requests.exceptions import Timeout
 from uhashring import HashRing
+from mmh3 import hash as m3h
 import json
 import os
 import requests as req
 import numpy as np
 import time
+
 
 
 app = Flask(__name__)
@@ -235,9 +237,20 @@ class Store(Resource):
         print("causal: ", causalmetadata, flush=True)
         print("length of causal: ", len(causalmetadata.split(" ")), flush=True)
         print("length of viewstore: ", len(viewstore), flush=True)
-        if key not in dic:
-            return {'doesExist':False,'error':'Key does not exist','message':'Error in GET'}, 404
-        return {"message":"Retrieved successfully", "causal-metadata": causalmetadata, "value": dic.get(key)}, 200
+
+        shardid = getShardID(key,hr)
+        print(shardid, flush=True)
+        if shard_id == shardid:
+            if key not in dic:
+                return {'doesExist':False,'error':'Key does not exist','message':'Error in GET'}, 404
+            return {"message":"Retrieved successfully", "causal-metadata": causalmetadata, "value": dic.get(key)}, 200
+        # else:
+        #     #send request
+        #     # nodelist = shard_members['shardid']
+        #     # nodetosend = nodelist[0]
+            
+        #     # payload = {"message":"Retrieved successfully", "causal-metadata": causalmetadata, "value": dic.get(key)}
+        #     return 
 
     def put(self,key):
         global causalmetadata
@@ -296,60 +309,79 @@ class Store(Resource):
 
         causalmetadata = " ".join(updated_clock)
 
-        #incorrect input
-        if not args["value"]:
-            res = {'error':'Value is missing', 'message': 'Error in PUT'}
-            return res,400
+        #get the shard id of the given key
+        shardid = getShardID(key,hr)
+        print(shardid, flush=True)
 
-        #key is too long
-        if len(key)>50:
-            res = {'error':'Key is too long', 'message': 'Error in PUT'}
-            return res,400
+        #if both shard id's match, continue with request normally. Otherwise, forward request to a node with the same shardid
+        #as the key
+        if shard_id == shardid:
+            
+            #incorrect input
+            if not args["value"]:
+                res = {'error':'Value is missing', 'message': 'Error in PUT'}
+                return res,400
 
-        # Confirmed to be a valid key! Create a newkey boolean and either add or replace.
-        newkey = False
-        if key not in dic:
-            dic[key] = args["value"]
-            res = {"message":"Added successfully", "causal-metadata": causalmetadata}
-            newkey = True
-        else:
-            # To prevent constant repetitive put calls between replicas...
-            originalvalue = dic.get(key)
-            if originalvalue == args["value"]:
-                # Nothing changed. Do not broadcast.
-                res = {"message":"Updated successfully", "causal-metadata": causalmetadata}
-                return res,200
-            else:
-                # Something changed!
+            #key is too long
+            if len(key)>50:
+                res = {'error':'Key is too long', 'message': 'Error in PUT'}
+                return res,400
+
+            # Confirmed to be a valid key! Create a newkey boolean and either add or replace.
+            newkey = False
+            if key not in dic:
                 dic[key] = args["value"]
-                res = {"message":"Updated successfully", "causal-metadata": causalmetadata}
-                newkey = False
-
-
-        # Regardless of newkey, Broadcast the same PUT request to all other replicas in the view save for itself.
-        valuevar = str(args["value"])
-        payload = {"value" : valuevar, "causal-metadata": causalmetadata, "node":1}
-
-
-        # only the the replica dealing with the client should broadcast the request
-        if not args["node"]:
-            print("  - Broadcasting PUT to other replicas...")
-            print("Payload: ", payload)
-            for replicaaddr in viewstore:
-                if replicaaddr != socketaddr:
-                    print("  - Sending PUT to " + replicaaddr + "...")
-                    try:
-                        request = req.put("http://" + replicaaddr +"/key-value-store/"+str(key), data=payload, timeout=timeoutduration)
-                        print("   - Success!")
-                    except req.exceptions.RequestException as ex:
-                        # WARNING, a replica in the view could not be reached! time to call key-value-store-view DELETE.
-                        print("   WARNING - Unable to reach replica address " + replicaaddr + "! Exception Raised: ", ex)
-                        deleteaddr(replicaaddr)
-            # End Broadcast
-            if newkey:
-                return res,201
+                res = {"message":"Added successfully", "causal-metadata": causalmetadata, "shard-id":shard_id}
+                newkey = True
             else:
-                return res,200
+                # To prevent constant repetitive put calls between replicas...
+                originalvalue = dic.get(key)
+                if originalvalue == args["value"]:
+                    # Nothing changed. Do not broadcast.
+                    res = {"message":"Updated successfully", "causal-metadata": causalmetadata, "shard-id":shard_id}
+                    return res,200
+                else:
+                    # Something changed!
+                    dic[key] = args["value"]
+                    res = {"message":"Updated successfully", "causal-metadata": causalmetadata, "shard-id":shard_id}
+                    newkey = False
+
+
+            # Regardless of newkey, Broadcast the same PUT request to all other replicas in the view save for itself.
+            valuevar = str(args["value"])
+            payload = {"value" : valuevar, "causal-metadata": causalmetadata, "node":1}
+
+
+            # only the the replica dealing with the client should broadcast the request
+            if not args["node"]:
+                print("  - Broadcasting PUT to other replicas...")
+                print("Payload: ", payload)
+                for replicaaddr in viewstore:
+                    if replicaaddr != socketaddr:
+                        print("  - Sending PUT to " + replicaaddr + "...")
+                        try:
+                            request = req.put("http://" + replicaaddr +"/key-value-store/"+str(key), data=payload, timeout=timeoutduration)
+                            print("   - Success!")
+                        except req.exceptions.RequestException as ex:
+                            # WARNING, a replica in the view could not be reached! time to call key-value-store-view DELETE.
+                            print("   WARNING - Unable to reach replica address " + replicaaddr + "! Exception Raised: ", ex)
+                            deleteaddr(replicaaddr)
+                # End Broadcast
+                if newkey:
+                    return res,201
+                else:
+                    return res,200
+        else:
+            nodelist = shard_members['shardid']
+            nodetosend = nodelist[0]
+            valuevar = str(args["value"])
+            payload = {"value" : valuevar, "causal-metadata": causalmetadata}
+            try:
+                request = req.put("http://" + nodetosend +"/key-value-store/"+str(key), data=payload, timeout=timeoutduration)
+            except:
+                print("   WARNING - Unable to reach replica address " + nodetosend + "! Exception Raised: ", ex)
+                deleteaddr(node)
+
 
     def delete(self,key):
         print("(Log Message)[STORE] Initiating delete!")
@@ -395,7 +427,7 @@ class Store(Resource):
         clock = int(current_clock[replicaNumber])
 
         newclock = int(received_clock[replicaNumber])
-
+        
         #make sure the nodes are not incrementing their own VC's, only the replica comminucating with the client should increment
         if not args["node"]:
             clock +=1
@@ -406,15 +438,18 @@ class Store(Resource):
         print("updated clock:", updated_clock,flush=True)
 
         causalmetadata = " ".join(updated_clock)
+        shardid = getShardID(key,hr)
+        print(shardid, flush=True)
 
-        #key is too long
-        if len(key)>50:
-            res = {'error':'Key is too long', 'message': 'Error in DELETE'}
-            return res,400
+        if shard_id == shardid:
+            #key is too long
+            if len(key)>50:
+                res = {'error':'Key is too long', 'message': 'Error in DELETE'}
+                return res,400
 
-        payload = {"causal-metadata": causalmetadata, "node":1}
-        if key in dic:
-            del dic[key]
+            payload = {"causal-metadata": causalmetadata, "node":1}
+            if key in dic:
+                del dic[key]
 
             # Broadcast same DELETE request to all other replicas in the view save for itself.
             if not args["node"]:
@@ -431,10 +466,20 @@ class Store(Resource):
                             print("   WARNING - Unable to reach replica address " + replicaaddr + "! Exception Raised: ", ex)
                             deleteaddr(replicaaddr)
 
-                return {"message":"Deleted successfully", "causal-metadata": causalmetadata},200
-
-        if key not in dic:
-            return {'doesExist': False,'error':'Key does not exist','message':'Error in DELETE'},404
+                return {"message":"Deleted successfully", "causal-metadata": causalmetadata, "shard-id":shard_id},200
+        else:
+            if key not in dic:
+                return {'doesExist': False,'error':'Key does not exist','message':'Error in DELETE'},404
+            else:
+                nodelist = shard_members['shardid']
+                nodetosend = nodelist[0]
+                valuevar = str(args["value"])
+                payload = {"value" : valuevar, "causal-metadata": causalmetadata}
+                try:
+                    request = req.put("http://" + nodetosend +"/key-value-store/"+str(key), data=payload, timeout=timeoutduration)
+                except:
+                    print("   WARNING - Unable to reach replica address " + nodetosend + "! Exception Raised: ", ex)
+                    deleteaddr(nodetosend)
 
 # /key-value-store-view
 class ViewStore(Resource):
@@ -546,6 +591,10 @@ class ShardKeyCount(Resource):
     #URL Format: "/key-value-store-shard/shard-id-key-count/<shard-id>"
     # return # of keys stored in the shard
     def get(self, id):
+        # int numKeys
+        # for element in shard_members[id]:
+            #loop through one node, if its up, and obtain all the key value pairs and add the total num, return it
+            #else ??
         return None
 
 #TO-DO:
@@ -694,6 +743,8 @@ def instantiateReplica(viewstore, socketaddress):
 def getShards():
     return list(hr.get_nodes())
 
+def getShardID(key, hashRing):
+    return hashR.get_node(key)
 
 
 def assignShards(viewlist,shardCount):
@@ -759,7 +810,7 @@ if __name__ == "__main__":
     print(" Starting replica instance...")
     ip_add = "0.0.0.0"
 
-    hr = HashRing()
+    hr = HashRing(hash_fn=m3h)
 
     #add the shards to the hashring
     for i in range(int(shardcnt)):
