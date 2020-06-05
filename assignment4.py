@@ -564,7 +564,7 @@ class ShardIdMembers(Resource):
         print("(Log Message)[SHARD] Initiating shard-id-members GET!")
         if id == shard_id:
             print("(Log Message)[SHARD] passed id is the same as host node's id!")
-            return {"message":"Members of shard ID retrieved successfully","shard-id-members":shard_members}, 200
+            return {"message":"Members of shard ID retrieved successfully","shard-id-members":shard_members[id]}, 200
         else:
             print("(Log Message)[SHARD] passed id is NOT the same as host node's id, beginning search.")
             for replicaaddr in viewstore:
@@ -581,7 +581,7 @@ class ShardIdMembers(Resource):
                             print("   - Success! Got a response of " + str(request.text))
                             data = request.json()
                             # All done! Return it. 
-                            return {"message":"Members of shard ID retrieved successfully","shard-id-members":data['shard-id-members']}, 200
+                            return {"message":"Members of shard ID retrieved successfully","shard-id-members":data['shard-id-members'][id]}, 200
                     except req.exceptions.RequestException as ex:
                         # WARNING, a replica in the view could not be reached! time to call key-value-store-view DELETE.
                         print("   WARNING - Unable to reach replica address " + replicaaddr + "! Exception Raised: ", ex)
