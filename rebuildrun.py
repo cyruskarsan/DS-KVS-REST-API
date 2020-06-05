@@ -73,9 +73,9 @@ def runInstance(hostPortNumber, ipAddress, subnetName, instanceName, socketaddre
 
 
 def stopAndRemoveInstance(instanceName):
-    stopCommand = "docker stop " + instanceName
-    removeCommand = "docker rm " + instanceName
-    os.system(stopCommand)
+    #stopCommand = "docker stop " + instanceName
+    removeCommand = "docker rm -f " + instanceName
+    #os.system(stopCommand)
     os.system(removeCommand)
 
 def stopAll():

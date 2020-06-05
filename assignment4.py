@@ -342,12 +342,16 @@ class Store(Resource):
 
         # There was no conflict, set the indivdual replica clock
         clock = int(current_clock[replicaNumber])
+        print("current node clock: ", clock)
 
         newclock = int(received_clock[replicaNumber])
 
         #make sure the nodes are not incrementing their own VC's, only the replica comminucating with the client should increment
+
         if not args["node"]:
+            print("Update the clock")
             clock +=1
+            print("incremented clock: ", clock)
             current_clock[replicaNumber] = str(clock)
 
         #then update point-wise max
@@ -721,8 +725,24 @@ class ShardAddMember(Resource):
             print("[WARNING]: socket address of the node is currently not in the view", flush=True)
         if shardid not in shards:
             return {"message":"ERROR: shard-id does not exist"}, 404
-        if shardid not in shard_members[shardid]:
+        if targetsocket not in shard_members[shardid]:
             shard_members[shardid].append(targetsocket)
+            broadcastload = {"socket-address":targetsocket}
+            for member in viewstore:
+                if member != socketaddr and member != targetsocket:
+                #broadcast to all shards
+                    try:
+                        addshardtomem = req.put("http://" + member + "/key-value-store-shard/add-member/"+shardid, data=broadcastload, timeout=5)
+                    except:
+                        print("could not add new member to ", member)
+                        continue
+
+            payload = {"shard-id":shardid, "socket-address": socketaddr}
+            print("ShardAddMember payload: ", payload, flush=True)
+            try:
+                addshard = req.put("http://" + targetsocket +"/addtoshard", data=payload, timeout=5)
+            except:
+                print("Could not add to shard")
             return 200
         else:
             return {"message":"Node is already in the shard"}, 200
@@ -907,19 +927,22 @@ def instantiateReplica(viewstore, socketaddress):
     print("getting KVS from a replica")
     print("dictionary: ", dic, flush=True)
     if not dic:
-        try:
-            for address in shard_members[shard_id]:
-                if address != socketaddress:
-                    kvs = req.get("http://" + address + "/kvs", timeout=5)
-                    kvs = kvs.json()
-                    print("Request response from kvs: ", kvs, flush=True)
-                    if kvs:
-                        print("adding dictionary from KVS to self")
-                        for key in kvs:
-                            dic[key] = kvs[key]
-        except req.exceptions.RequestException as rex:
-            print(rex, flush=True)
-            print("Could not GET to the first replica in viewstore", flush=True)
+        if shard_id != None:
+            try:
+                for address in shard_members[shard_id]:
+                    if address != socketaddress:
+                        kvs = req.get("http://" + address + "/kvs", timeout=5)
+                        kvs = kvs.json()
+                        print("Request response from kvs: ", kvs, flush=True)
+                        if kvs:
+                            print("adding dictionary from KVS to self")
+                            for key in kvs:
+                                dic[key] = kvs[key]
+            except req.exceptions.RequestException as rex:
+                print(rex, flush=True)
+                print("Could not GET to the first replica in viewstore", flush=True)
+        else:
+            print("Not part of a shard yet, Did not get any KVS information", flush=True)
     print("SUCCESS!")
 
 def getShards():
@@ -944,12 +967,37 @@ def assignShards(viewlist,shardCount):
     print("\n\n\n")
     return viewlist
 
+class addToShard(Resource):
+    def put(self):
+        global shard_id
+        global shard_members
+        parser = reqparse.RequestParser(bundle_errors=True)
+        parser.add_argument("shard-id", type=str)
+        parser.add_argument("socket-address", type=str)
+        args = parser.parse_args()
+        print(args, flush=True)
+        if args['shard-id'] == None or args['socket-address'] == None:
+            return "failed to add to shard", 500
+        else:
+            shard_id = args['shard-id']
+            targetaddress = args['socket-address']
+            members = req.get("http://"+targetaddress+"/getmembers", timeout=2)
+            for member in members.json():
+                shard_members[member] = members.json()[member]
+
+            print("Nodes shard info: ", shard_members, flush=True)
+            return "added to shard", 200
+
+class getMembers(Resource):
+    def get(self):
+        return shard_members
+
 if __name__ == "__main__":
     print("Hello there! CSE_Assignment4 replica instance initiated...")
     # Main instance.
     print(" Starting replica instance...")
     ip_add = "0.0.0.0"
-
+    shardcnt = None
     #to ensure that the thread running has the required environment variables
     if 'SOCKET_ADDRESS' in os.environ and os.environ['SOCKET_ADDRESS'] != "":
         socketaddr = os.environ['SOCKET_ADDRESS']
@@ -974,7 +1022,7 @@ if __name__ == "__main__":
     causalmetadata = " ".join(clock)
 
     nodes = None
-    if shardcnt != "":
+    if shardcnt != None:
         #Get node index from view list
         nodeidx = viewstore.index(socketaddr)
         #split the nodes in the viewlist into shards of index 0 to n
@@ -999,12 +1047,13 @@ if __name__ == "__main__":
     hr = HashRing(hash_fn=m3h)
 
     #add the shards to the hashring
-    for i in range(int(shardcnt)):
-        hr.add_node("shard"+str(i))
-        shards.append("shard"+str(i))
+    if shardcnt != None:
+        for i in range(int(shardcnt)):
+            hr.add_node("shard"+str(i))
+            shards.append("shard"+str(i))
     #assign all addresses to a shard
     #if socketaddr is part of the shard, then assign shardid to the node
-    if nodes != None:
+    if nodes != None and shardcnt != None:
         for i in range(int(shardcnt)):
             shard_members["shard"+str(i)] = nodes[i]
             if socketaddr in shard_members["shard"+str(i)]:
@@ -1030,4 +1079,6 @@ if __name__ == "__main__":
     api.add_resource(KVS, "/kvs")
     api.add_resource(KVSOverwite, "/kvs/overwrite")
     api.add_resource(NodeSetShardId, "/key-value-store-shard/node-set-shard-id")
+    api.add_resource(addToShard, "/addtoshard")
+    api.add_resource(getMembers, "/getmembers")
     app.run(host=ip_add,port=8085)
