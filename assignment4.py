@@ -576,6 +576,7 @@ class NodeSetShardId(Resource):
 # overwrite the existing dictionary. 
 class KVSOverwite(Resource):
     def put(self):
+        global dic
         print("(Log Message)[SHARD] Initiating KVSOverwrite PUT!")
         parser = reqparse.RequestParser(bundle_errors=True)
         parser.add_argument("kvs", type=str)
@@ -596,7 +597,7 @@ class KVSOverwite(Resource):
 class ShardIdMembers(Resource):
     #URL Format: "/key-value-store-shard/shard-id-members/<shard-id>"
     def get(self, id):
-        print("(Log Message)[SHARD] Initiating shard-id-members GET!")
+        print("(Log Message)[SHARD] Initiating shard-id-members GET for id " + str(id))
         if id == shard_id:
             print("(Log Message)[SHARD] passed id is the same as host node's id!")
             return {"message":"Members of shard ID retrieved successfully","shard-id-members":shard_members[id]}, 200
@@ -623,6 +624,7 @@ class ShardIdMembers(Resource):
                         # WARNING, a replica in the view could not be reached! time to call key-value-store-view DELETE.
                         print("   WARNING - Unable to reach replica address " + replicaaddr + "! Exception Raised: ", ex)
                         deleteaddr(replicaaddr)
+            print("ERROR - passed shard does not exist?!")
             return {"error":"Shard address does not exist!","message":"Error in GET"}, 404
 
 class ShardKeyCount(Resource):
@@ -688,7 +690,7 @@ class ShardReshard(Resource):
         # With list of all shard ID's, shards, iterate.
         for id in shards:
             if id != shard_id: # If not current shard
-                print("Querying dictionary from shard '" + str(id)+"'.")
+                print("Querying dictionary for shard '" + str(id)+"'.")
                 # For each shard, get list of all nodes in shard by calling same node's class function.
                 request = ShardIdMembers.get(self, id)
                 id_shard_members = request[0]['shard-id-members']
@@ -699,9 +701,11 @@ class ShardReshard(Resource):
                 print("  - Sending GET to " + replicaaddr + "/kvs...")
                 try:
                     request = req.get("http://" + replicaaddr +"/kvs", timeout=timeoutduration)
-                    print("   - Success! Got a response of " + str(request.text))
+                    json_acceptable_string = request.text.replace("'", "\"")
+                    d = json.loads(json_acceptable_string)
+                    print("   - Success! Got a response of " + str(d))
                     # Append gotten key-value store to current dictionary
-                    aggregatedic = {**aggregatedic, **request.text}
+                    aggregatedic = {**aggregatedic, **d}
                     print("Dic of shard "+ str(id) + " added. Current combined dictionary: " + str(aggregatedic))
                 except req.exceptions.RequestException as ex:
                     # WARNING, a replica in the view could not be reached! time to call key-value-store-view DELETE.
@@ -717,6 +721,10 @@ class ShardReshard(Resource):
         shard_id = None
         shard_members = {}
         nodes = None
+
+        # master list of shards and sockets addresses
+        # Ex) {shard0:10.10.0.2:8085,10.10.0.3:8085,shard1:10.10.0.4:8085,10.10.0.5:8085,shard2:10.10.0.6:8085,10.10.0.7:8085}
+        shardmasterlist = {}
 
         if shardcnt != "":
             #Get node index from view list
@@ -744,14 +752,14 @@ class ShardReshard(Resource):
                 shard_members["shard"+str(i)] = nodes[i]
                 if socketaddr in shard_members["shard"+str(i)]:
                     shard_id = "shard"+str(i)
+        #End copied code. 
+        print("Shard master list completed. New Schema now is: " + str(shard_members))# *****NOT COPIED
 
         # Apply effects to ALL other shards!
         for id in shards: 
             payload = {"shard-id": id}
             # For each shard, get list of all nodes in shard by calling same node's class function.
-            request = ShardIdMembers.get(self, id)
-            id_shard_members = request[1]
-            for replicaaddr in id_shard_members:
+            for replicaaddr in shard_members[id]:
                 print("  - Sending PUT to " + replicaaddr + "/key-value-store-shard/node-set-shard-id...")
                 try:
                     request = req.put("http://" + replicaaddr +"/key-value-store-shard/node-set-shard-id", data=payload, timeout=timeoutduration)
@@ -780,9 +788,7 @@ class ShardReshard(Resource):
         for id in shards: 
             payload = {"kvs": sharddic[id]}
             # For each shard, get list of all nodes in shard by calling same node's class function.
-            request = ShardIdMembers.get(self, id)
-            id_shard_members = request[1]
-            for replicaaddr in id_shard_members:
+            for replicaaddr in shard_members[id]:
                 print("  - Sending PUT to " + replicaaddr + "...")
                 try:
                     request = req.put("http://" + replicaaddr +"/kvs/overwrite", data=payload, timeout=timeoutduration)
