@@ -713,8 +713,9 @@ class ShardKeyCount(Resource):
                     #print("key",key)
                     numKeys+=1
                 return {"message":"Key count of shard ID retrieved successfully","shard-id-key-count":numKeys},200  
-            else:
-                return {"No replicas up in the shard"},500
+        
+        #No replicas were up
+        return {"No replicas up in the shard"},500
         
 
 #TO-DO:
