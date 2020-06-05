@@ -593,18 +593,20 @@ class ShardIdMembers(Resource):
             print("(Log Message)[SHARD] passed id is NOT the same as host node's id, beginning search.")
             for replicaaddr in viewstore:
                 if replicaaddr not in shard_members:
-                    print("  - Sending GET to " + replicaaddr + "...")
+                    print("  - Sending GET to " + replicaaddr + "/key-value-store-shard/node-shard-id...")
                     try:
                         request = req.get("http://" + replicaaddr +"/key-value-store-shard/node-shard-id", timeout=timeoutduration)
                         print("   - Success! Got a response of " + str(request.text))
                         data = request.json()
                         if data['shard-id'] == id:
-                            print("  - Sending GET to " + replicaaddr + "...")
+                            print('Got a matching shard-id!')
+                            print("  - Sending GET to " + replicaaddr + "/key-value-store-shard/node-shard-members...")
                             # Found a hit! Get this address's shard members. 
                             request = req.get("http://" + replicaaddr +"/key-value-store-shard/node-shard-members", timeout=timeoutduration)
                             print("   - Success! Got a response of " + str(request.text))
                             data = request.json()
                             # All done! Return it. 
+                            print("...(Log Message)[SHARD] shard-id-members GET is done!")
                             return {"message":"Members of shard ID retrieved successfully","shard-id-members":data['shard-id-members'][id]}, 200
                     except req.exceptions.RequestException as ex:
                         # WARNING, a replica in the view could not be reached! time to call key-value-store-view DELETE.
@@ -678,10 +680,12 @@ class ShardReshard(Resource):
                 print("Querying dictionary from shard '" + str(id)+"'.")
                 # For each shard, get list of all nodes in shard by calling same node's class function.
                 request = ShardIdMembers.get(self, id)
-                id_shard_members = request.json()['shard-id-members']
+                id_shard_members = request[0]['shard-id-members']
+                print("Got id_shard_members:")
+                print(id_shard_members)
                 replicaaddr = id_shard_members[0] # It doesn't matter which address we go for in the shard.
                 # Get all keys (KVS resource) from any node in the shard. Append to current dictionary.
-                print("  - Sending GET to " + replicaaddr + "...")
+                print("  - Sending GET to " + replicaaddr + "/kvs...")
                 try:
                     request = req.get("http://" + replicaaddr +"/kvs", timeout=timeoutduration)
                     print("   - Success! Got a response of " + str(request.text))
@@ -735,9 +739,9 @@ class ShardReshard(Resource):
             payload = {"shard-id": id}
             # For each shard, get list of all nodes in shard by calling same node's class function.
             request = ShardIdMembers.get(self, id)
-            id_shard_members = request.json()['shard-id-members']
+            id_shard_members = request[1]
             for replicaaddr in id_shard_members:
-                print("  - Sending PUT to " + replicaaddr + "...")
+                print("  - Sending PUT to " + replicaaddr + "/key-value-store-shard/node-set-shard-id...")
                 try:
                     request = req.put("http://" + replicaaddr +"/key-value-store-shard/node-set-shard-id", data=payload, timeout=timeoutduration)
                     print("   - Success!")
@@ -766,7 +770,7 @@ class ShardReshard(Resource):
             payload = {"kvs": sharddic[id]}
             # For each shard, get list of all nodes in shard by calling same node's class function.
             request = ShardIdMembers.get(self, id)
-            id_shard_members = request.json()['shard-id-members']
+            id_shard_members = request[1]
             for replicaaddr in id_shard_members:
                 print("  - Sending PUT to " + replicaaddr + "...")
                 try:
