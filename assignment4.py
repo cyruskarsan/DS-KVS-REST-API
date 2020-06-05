@@ -549,6 +549,17 @@ class NodeShardMembers(Resource):
         print("(Log Message)[SHARD] Initiating node-shard-members GET!")
         return {"message":"Shard Members of the node retrieved successfully","shard-id-members":shard_members}, 200
 
+# Aux service not specified in spec, for use in ShardReshard.
+# For any node, re-set it's shardID.
+class NodeSetShardId(Resource):
+    def put(self):
+        parser = reqparse.RequestParser(bundle_errors=True)
+        parser.add_argument("shard-id", type=str)
+        args = parser.parse_args()
+        newshardID = args["shard-id"] # get shard-id
+        shard_id = newshardID # update.
+        return {"message":"Updated successfully"}, 200
+
 # Aux service not specified in the spec, for use in ShardReshard. 
 # For any node, given the passed JSON object in the PUT call, 
 # overwrite the existing dictionary. 
@@ -556,7 +567,7 @@ class KVSOverwite(Resource):
     def put(self):
         print("(Log Message)[SHARD] Initiating KVSOverwrite PUT!")
         parser = reqparse.RequestParser(bundle_errors=True)
-        parser.add_argument("socket-address", type=str)
+        parser.add_argument("kvs", type=str)
         args = parser.parse_args()
         kvs = args["kvs"] # get kvs to overwrite existing dictionary. 
         print("Overwiting existing dictionary:\n" + str(dic) + "\nwith passed kvs:\n" + str(kvs))
@@ -700,6 +711,7 @@ class ShardReshard(Resource):
             #cannot partition nodes into shards if it cannot have at least 2 nodes per shard
             if nodes == -1:
                 print("Error stated above")
+                return {"message":"Not enough nodes to provide fault-tolerance with the given shard count!"}, 400
             else:
                 #range starts from 0
                 for shard in range(int(shardcnt)):
@@ -718,18 +730,40 @@ class ShardReshard(Resource):
                 if socketaddr in shard_members["shard"+str(i)]:
                     shard_id = "shard"+str(i)
 
-        # TODO: Apply effects to ALL other shards!
+        # Apply effects to ALL other shards!
+        for id in shards: 
+            payload = {"shard-id": id}
+            # For each shard, get list of all nodes in shard by calling same node's class function.
+            request = ShardIdMembers.get(self, id)
+            id_shard_members = request.json()['shard-id-members']
+            for replicaaddr in id_shard_members:
+                print("  - Sending PUT to " + replicaaddr + "...")
+                try:
+                    request = req.put("http://" + replicaaddr +"/key-value-store-shard/node-set-shard-id", data=payload, timeout=timeoutduration)
+                    print("   - Success!")
+                except req.exceptions.RequestException as ex:
+                    # WARNING, a replica in the view could not be reached! time to call key-value-store-view DELETE.
+                    print("   WARNING - Unable to reach replica address " + replicaaddr + "! Exception Raised: ", ex)
+                    deleteaddr(replicaaddr)
+        print("All replicas have been updated to revised shard scheme!")
 
         # **Redistribute keys, overwriting existing.**
 
-        # TODO: Requires SAME key-to-shard mechanism implemented in the PUT call for key-value-store. 
+        # Requires SAME key-to-shard mechanism implemented in the PUT call for key-value-store. 
         # Can copy that code down here and use it to create an array of dictionaries to apply to
         # each shard, and then call the auxiliary functions to overwrite and apply the devised 
         # schema.  
+        sharddic = {} # master dictionary containing all dictionaries seprated by schema
+        for id in shards:
+            sharddic[id] = {} # Append an empty dictionary for each shard id. 
+        # Dictionary should now look something like: {'shard1':{},'shard2':{}}
+        for key, value in aggregatedic.items(): # For each key/value pair
+            shardID = getShardID(key, hr) # Apply the same schema as the PUT call
+            sharddic[shardID][key] = value # Insert into dictionary for that shardID, ex) {'shard1':{'key':'value'},'shard2':{}}
+        print("Aggregatedic has been completed. It looks like: " + str(aggregatedic))
 
         for id in shards: 
-            # TODO: This should be the correct dictionary applicable to this particular id. Currently empty. 
-            payload = {"kvs": {}}
+            payload = {"kvs": sharddic[id]}
             # For each shard, get list of all nodes in shard by calling same node's class function.
             request = ShardIdMembers.get(self, id)
             id_shard_members = request.json()['shard-id-members']
@@ -744,7 +778,7 @@ class ShardReshard(Resource):
                     deleteaddr(replicaaddr)
 
         # All done!
-        return None
+        return {"message":"Resharding done successfully"}, 200
 
 # Used to sync a replica in the case that it goes down and comes back online
 def instantiateReplica(viewstore, socketaddress):
@@ -907,4 +941,5 @@ if __name__ == "__main__":
     api.add_resource(NodeShardMembers, "/key-value-store-shard/node-shard-members")
     api.add_resource(KVS, "/kvs")
     api.add_resource(KVSOverwite, "/kvs/overwrite")
+    api.add_resource(NodeSetShardId, "/key-value-store-shard/node-set-shard-id")
     app.run(host=ip_add,port=8085)
