@@ -823,10 +823,6 @@ class ShardReshard(Resource):
         shard_members = {}
         nodes = None
 
-        # master list of shards and sockets addresses
-        # Ex) {shard0:10.10.0.2:8085,10.10.0.3:8085,shard1:10.10.0.4:8085,10.10.0.5:8085,shard2:10.10.0.6:8085,10.10.0.7:8085}
-        shardmasterlist = {}
-
         if shardcnt != "":
             #Get node index from view list
             nodeidx = viewstore.index(socketaddr)
