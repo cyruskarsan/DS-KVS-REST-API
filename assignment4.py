@@ -614,7 +614,7 @@ class NodeShardMembers(Resource):
 class NodeSetShardId(Resource):
     def put(self):
         #{"shard-id": id,"shards": shards, "shard-members":shard_members[id]}
-        print("(Log Message)[SHARD] Initiating node-set-shard-id PUT!")
+        print("[NodeSetShardId] Initiating node-set-shard-id PUT!")
         parser = reqparse.RequestParser(bundle_errors=True)
         parser.add_argument("shard-id", type=str)
         parser.add_argument("shards", type=str)
@@ -630,12 +630,18 @@ class NodeSetShardId(Resource):
         global shard_id 
         global shards
         global shard_members
-        print("Replacing current shard_id " + str(shard_id) + " with newshardID " + str(newshardID))
+        print("[NodeSetShardId] Replacing current shard_id " + str(shard_id) + " with newshardID " + str(newshardID))
         shard_id = newshardID # update.
-        print("Replacing current shards " + str(shards) + " with newshards " + str(newshards))
+        print("[NodeSetShardId] Replacing current shards " + str(shards) + " with newshards " + str(newshards))
         shards = newshards # update.
-        print("Replacing current shard_members" + str(shard_members) + " with newshard_members " + str(newshard_members))
+        print("[NodeSetShardId] Replacing current shard_members" + str(shard_members) + " with newshard_members " + str(newshard_members))
         shard_members = newshard_members # update.
+        #print("[NodeSetShardId] Updating hashring...")
+        #hr = HashRing()
+        #add the shards to the hashring
+        #for i in range(int(shardcnt)):
+        #    hr.add_node("shard"+str(i))
+        #print("   - Done!")
         return {"message":"Updated successfully"}, 200
 
 # Aux service not specified in the spec, for use in ShardReshard. 
@@ -774,7 +780,7 @@ class ShardReshard(Resource):
     def put(self):
         global shard_id
         global shards
-        print("(Log Message)[SHARD] Initiating reshard PUT!")
+        print("[ShardReshard] Initiating reshard PUT!")
         parser = reqparse.RequestParser(bundle_errors=True)
         parser.add_argument("shard-count", type=str)
         args = parser.parse_args()
@@ -792,11 +798,11 @@ class ShardReshard(Resource):
         # With list of all shard ID's, shards, iterate.
         for id in shards:
             if id != shard_id: # If not current shard
-                print("Querying dictionary for shard '" + str(id)+"'.")
+                print("[ShardReshard] Querying dictionary for shard '" + str(id)+"'.")
                 # For each shard, get list of all nodes in shard by calling same node's class function.
                 request = ShardIdMembers.get(self, id)
                 id_shard_members = request[0]['shard-id-members']
-                print("Got id_shard_members:")
+                print("[ShardReshard] Got id_shard_members:")
                 print(id_shard_members)
                 replicaaddr = id_shard_members[0] # It doesn't matter which address we go for in the shard.
                 # Get all keys (KVS resource) from any node in the shard. Append to current dictionary.
@@ -808,12 +814,12 @@ class ShardReshard(Resource):
                     print("   - Success! Got a response of " + str(d))
                     # Append gotten key-value store to current dictionary
                     aggregatedic = {**aggregatedic, **d}
-                    print("Dic of shard "+ str(id) + " added. Current combined dictionary: " + str(aggregatedic))
+                    print("[ShardReshard] Dic of shard "+ str(id) + " added. Current combined dictionary: " + str(aggregatedic))
                 except req.exceptions.RequestException as ex:
                     # WARNING, a replica in the view could not be reached! time to call key-value-store-view DELETE.
                     print("   WARNING - Unable to reach replica address " + replicaaddr + "! Exception Raised: ", ex)
                     deleteaddr(replicaaddr)
-        print("Complete dictionary gathered!")
+        print("[ShardReshard] Complete dictionary gathered!")
         
         # **Reshard existing shards.**
 
@@ -831,7 +837,7 @@ class ShardReshard(Resource):
             nodes = assignShards(viewstore,shardcnt)
             #cannot partition nodes into shards if it cannot have at least 2 nodes per shard
             if nodes == -1:
-                print("Error stated above")
+                print("[ShardReshard] Error stated above")
                 return {"message":"Not enough nodes to provide fault-tolerance with the given shard count!"}, 400
             else:
                 #range starts from 0
@@ -851,7 +857,7 @@ class ShardReshard(Resource):
                 if socketaddr in shard_members["shard"+str(i)]:
                     shard_id = "shard"+str(i)
         #End copied code. 
-        print("Shard master list completed. New Schema now is: " + str(shard_members))# *****NOT COPIED
+        print("[ShardReshard] Shard master list completed. New Schema now is: " + str(shard_members))# *****NOT COPIED
 
         # Apply effects to ALL other shards!
         for id in shards: 
@@ -866,7 +872,7 @@ class ShardReshard(Resource):
                     # WARNING, a replica in the view could not be reached! time to call key-value-store-view DELETE.
                     print("   WARNING - Unable to reach replica address " + replicaaddr + "! Exception Raised: ", ex)
                     deleteaddr(replicaaddr)
-        print("All replicas have been updated to revised shard scheme!")
+        print("[ShardReshard] All replicas have been updated to revised shard scheme!")
 
         # **Redistribute keys, overwriting existing.**
 
@@ -881,10 +887,10 @@ class ShardReshard(Resource):
         for key, value in aggregatedic.items(): # For each key/value pair
             shardID = getShardID(key, hr) # Apply the same schema as the PUT call
             sharddic[shardID][key] = value # Insert into dictionary for that shardID, ex) {'shard1':{'key':'value'},'shard2':{}}
-        print("sharddic has been completed. It looks like: " + str(sharddic))
+        print("[ShardReshard] sharddic has been completed. It looks like: " + str(sharddic))
 
         for id in shards: 
-            print("For shardid " + str(id) + ", inserting kvs of " + str(sharddic[id]))
+            print("[ShardReshard] For shardid " + str(id) + ", inserting kvs of " + str(sharddic[id]))
             payload = {"kvs": sharddic[id]}
             # For each shard, get list of all nodes in shard by calling same node's class function.
             for replicaaddr in shard_members[id]:
