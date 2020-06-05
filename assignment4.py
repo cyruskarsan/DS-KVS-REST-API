@@ -239,11 +239,22 @@ class Store(Resource):
 
         shardid = getShardID(key,hr)
         print(shardid, flush=True)
-        if shard_id == shardid:
-            if key not in dic:
-                return {'doesExist':False,'error':'Key does not exist','message':'Error in GET'}, 404
-            return {"message":"Retrieved successfully", "causal-metadata": causalmetadata, "value": dic.get(key)}, 200
-        return None
+        if shardid != shard_id:
+            print("Caught wrong GET shardid", flush=True)
+            try:
+                nodelist = shard_members[shardid]
+                nodetosend = nodelist[0]
+                request = req.get("http://" + nodetosend +"/key-value-store/"+str(key), timeout=timeoutduration)
+
+            except req.exceptions.RequestException as ex:
+                print("   WARNING - Unable to reach replica address " + replicaaddr + "! Exception Raised: ", ex)
+            return request.json(), request.status_code
+
+        if key not in dic:
+            return {'doesExist':False,'error':'Key does not exist','message':'Error in GET'}, 404
+        return {"message":"Retrieved successfully", "causal-metadata": causalmetadata, "value": dic.get(key)}, 200
+
+
         # else:
         #     #send request
         #     # nodelist = shard_members['shardid']
