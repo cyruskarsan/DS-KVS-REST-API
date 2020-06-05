@@ -664,7 +664,7 @@ class ShardReshard(Resource):
         global shards
         print("(Log Message)[SHARD] Initiating reshard PUT!")
         parser = reqparse.RequestParser(bundle_errors=True)
-        parser.add_argument("socket-address", type=str)
+        parser.add_argument("shard-count", type=str)
         args = parser.parse_args()
         shardcnt= args["shard-count"]
 
