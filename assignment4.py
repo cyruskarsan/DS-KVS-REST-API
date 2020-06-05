@@ -242,7 +242,7 @@ class Store(Resource):
         if shardid != shard_id:
             print("Caught wrong GET shardid", flush=True)
             try:
-                nodelist = shard_members['shardid']
+                nodelist = shard_members[shardid]
                 nodetosend = nodelist[0]
                 request = req.get("http://" + nodetosend +"/key-value-store/"+str(key), timeout=timeoutduration)
 
