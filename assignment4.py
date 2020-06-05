@@ -21,7 +21,7 @@ api = Api(app)
 
 # Tweak variable, timeout until a replica is considered failed. 
 # Only for accessing other replicas!
-timeoutduration = 15
+timeoutduration = 1
 
 # Global variable, dictionary of keys and values. 
 dic = {}
@@ -295,12 +295,11 @@ class Store(Resource):
             for node in nodelist:
                 try:
                     print("Trying to forward PUT to ", node)
-                    fwdRequest = req.put("http://" + node + "/key-value-store/" + str(key), data=payload,
-                                      timeout=timeoutduration)
+                    fwdRequest = req.put("http://" + node + "/key-value-store/" + str(key), data=payload,timeout=timeoutduration)
                     if fwdRequest.status_code == 200 or fwdRequest.status_code == 201:
                         break
 
-                except:
+                except req.exceptions.RequestException as ex:
                     print("   WARNING - Unable to reach replica address " + node + "! Exception Raised: ", ex)
                     deleteaddr(node)
             if fwdRequest != None:
@@ -702,11 +701,19 @@ class ShardKeyCount(Resource):
     #URL Format: "/key-value-store-shard/shard-id-key-count/<shard-id>"
     # return # of keys stored in the shard
     def get(self, id):
-        # int numKeys
-        # for element in shard_members[id]:
-            #loop through one node, if its up, and obtain all the key value pairs and add the total num, return it
-            #else ??
-        return None
+        numKeys=0
+        for replicaaddr in shard_members[id]:
+            #Making sure the replica is up
+            if replicaaddr in viewstore:
+                replica_dic = (req.get("http://" + replicaaddr +"/kvs", timeout=timeoutduration)).json()
+                #print("replica dic:",replica_dic)
+                for key in replica_dic:
+                    #print("key",key)
+                    numKeys+=1
+                return {"message":"Key count of shard ID retrieved successfully","shard-id-key-count":numKeys},200  
+            else:
+                return {"No replicas up in the shard"},500
+        
 
 #TO-DO:
 # This only puts to the specific node-socket-address receiving the PUT request
