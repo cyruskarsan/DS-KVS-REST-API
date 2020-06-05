@@ -55,10 +55,9 @@ def runAdditionalInstance(hostPort, ipAddress, subnetName, instanceName, newView
     time.sleep(20)
 
 def stopAndRemoveInstance(instanceName):
-    stopCommand = "docker stop " + instanceName
-    removeCommand = "docker rm " + instanceName
-    os.system(stopCommand)
-    time.sleep(2)
+    #stopCommand = "docker stop " + instanceName
+    removeCommand = "docker rm -f " + instanceName
+    #os.system(stopCommand)
     os.system(removeCommand)
 
 def connectToNetwork(subnetName, instanceName):

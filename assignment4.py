@@ -769,6 +769,11 @@ class ShardReshard(Resource):
         parser.add_argument("shard-count", type=str)
         args = parser.parse_args()
         shardcnt= args["shard-count"]
+        numberOfNodes = len(viewstore)
+
+        if int(shardcnt) > numberOfNodes or numberOfNodes // int(shardcnt) < 2:
+            return {"message":"Illegal reshard"},400
+
 
         # **Collect all dictionaries from shards other than own shard (which node irrelevant)**
 
