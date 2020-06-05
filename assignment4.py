@@ -670,6 +670,8 @@ class ShardIdMembers(Resource):
         print("(Log Message)[SHARD] Initiating shard-id-members GET for id " + str(id))
         if id == shard_id:
             print("(Log Message)[SHARD] passed id is the same as host node's id!")
+            print("Current shard_members:")
+            print(shard_members)
             return {"message":"Members of shard ID retrieved successfully","shard-id-members":shard_members[id]}, 200
         else:
             print("(Log Message)[SHARD] passed id is NOT the same as host node's id, beginning search.")
@@ -856,7 +858,7 @@ class ShardReshard(Resource):
 
         # Apply effects to ALL other shards!
         for id in shards: 
-            payload = {"shard-id": str(id),"shards": str(shards), "shard-members": str(shard_members[id])}
+            payload = {"shard-id": str(id),"shards": str(shards), "shard-members": str(shard_members)}
             # For each shard, get list of all nodes in shard by calling same node's class function.
             for replicaaddr in shard_members[id]:
                 print("  - Sending PUT to " + replicaaddr + "/key-value-store-shard/node-set-shard-id with payload "+str(payload)+"...")
