@@ -5,6 +5,7 @@ import sys
 import random
 import time
 import os
+import subprocess
 
 hostname = 'localhost'  # Windows and Mac users can change this to the docker vm ip
 portNumber = '8085'
@@ -77,10 +78,20 @@ def stopAndRemoveInstance(instanceName):
     os.system(stopCommand)
     os.system(removeCommand)
 
+def stopAll():
+    listcmd = "docker ps -aq"
+    listprc = subprocess.check_output(listcmd, shell=True)
+    containerList = listprc.decode("utf-8").split("\n")
+    stcommand = "docker stop " + containerList
+    rmcommand = "docker rm " + containerList
+    os.system(stcommand)
+    os.system(rmcommand)
+
 
 def cleanUp(subnetName):
     for name in instanceNames:
         stopAndRemoveInstance(name)
+    #stopAll()
     removeSubnet(subnetName)
 
 
