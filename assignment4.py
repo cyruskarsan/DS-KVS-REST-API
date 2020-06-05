@@ -7,12 +7,12 @@ from flask import Flask, jsonify, request, abort
 from flask_restful import Api, Resource, reqparse
 from requests.exceptions import Timeout
 from uhashring import HashRing
-from mmh3 import hash as m3h
 import json
 import os
 import requests as req
 import numpy as np
 import time
+import hashlib
 
 
 
@@ -45,6 +45,7 @@ NumberOfReplicas = None
 shards = []
 shard_id = None
 shard_members = {}
+node_hashring = None
 
 # Used to delete an address from viewstore and broadcast that 
 # address to the rest of the replicas. This function is triggered by 
@@ -196,6 +197,7 @@ def checkVersion(currentCopy, receivedCopy, replicaNumber, key):
                         try:
                             r = req.get("http://" + address +"/key-value-store/"+str(key), timeout=5)
                             if r.status_code != 404:
+                                print("checkVersion r.json():", r.json(), flush=True)
                                 vc = r.json()['causal-metadata']
 
                                 # if the vector clock matches, return the KVS of that replica
@@ -237,13 +239,22 @@ class Store(Resource):
         print("length of causal: ", len(causalmetadata.split(" ")), flush=True)
         print("length of viewstore: ", len(viewstore), flush=True)
 
-        shardid = getShardID(key,hr)
+        shardid = getShardID(key,node_hashring)
         print(shardid, flush=True)
         if shard_id == shardid:
             if key not in dic:
                 return {'doesExist':False,'error':'Key does not exist','message':'Error in GET'}, 404
             return {"message":"Retrieved successfully", "causal-metadata": causalmetadata, "value": dic.get(key)}, 200
-        return None
+        else:
+            nodelist = shard_members[shardid]
+            nodetosend = nodelist[0]
+            payload = {"causal-metadata": causalmetadata}
+            try:
+                request = req.get("http://" + nodetosend + "/key-value-store/" + str(key), data=payload,
+                                  timeout=timeoutduration)
+            except:
+                print("   WARNING - Unable to reach replica address " + nodetosend + "! Exception Raised: ", ex)
+                deleteaddr(node)
         # else:
         #     #send request
         #     # nodelist = shard_members['shardid']
@@ -310,13 +321,13 @@ class Store(Resource):
         causalmetadata = " ".join(updated_clock)
 
         #get the shard id of the given key
-        shardid = getShardID(key,hr)
+        shardid = getShardID(key,node_hashring)
         print(shardid, flush=True)
 
         #if both shard id's match, continue with request normally. Otherwise, forward request to a node with the same shardid
         #as the key
         if shard_id == shardid:
-            
+            print("shardid == shard_id", flush=True)
             #incorrect input
             if not args["value"]:
                 res = {'error':'Value is missing', 'message': 'Error in PUT'}
@@ -372,10 +383,10 @@ class Store(Resource):
                 else:
                     return res,200
         else:
-            nodelist = shard_members['shardid']
+            nodelist = shard_members[shardid]
             nodetosend = nodelist[0]
             valuevar = str(args["value"])
-            payload = {"value" : valuevar, "causal-metadata": causalmetadata}
+            payload = {"value" : valuevar, "causal-metadata": meta}
             try:
                 request = req.put("http://" + nodetosend +"/key-value-store/"+str(key), data=payload, timeout=timeoutduration)
             except:
@@ -438,7 +449,7 @@ class Store(Resource):
         print("updated clock:", updated_clock,flush=True)
 
         causalmetadata = " ".join(updated_clock)
-        shardid = getShardID(key,hr)
+        shardid = getShardID(key,node_hashring)
         print(shardid, flush=True)
 
         if shard_id == shardid:
@@ -471,15 +482,18 @@ class Store(Resource):
             if key not in dic:
                 return {'doesExist': False,'error':'Key does not exist','message':'Error in DELETE'},404
             else:
-                nodelist = shard_members['shardid']
+                nodelist = shard_members[shardid]
                 nodetosend = nodelist[0]
                 valuevar = str(args["value"])
                 payload = {"value" : valuevar, "causal-metadata": causalmetadata}
                 try:
                     request = req.put("http://" + nodetosend +"/key-value-store/"+str(key), data=payload, timeout=timeoutduration)
+                    request.json()
+                    print("PUT forward: ", request)
                 except:
                     print("   WARNING - Unable to reach replica address " + nodetosend + "! Exception Raised: ", ex)
                     deleteaddr(nodetosend)
+                return request
 
 # /key-value-store-view
 class ViewStore(Resource):
@@ -705,10 +719,10 @@ class ShardReshard(Resource):
                 for shard in range(int(shardcnt)):
                     if socketaddr in nodes[shard]:
                         shard_id = shard
-        hr = HashRing()
+        node_hashring = HashRing(hash_fn=hashfn)
         #add the shards to the hashring
         for i in range(int(shardcnt)):
-            hr.add_node("shard"+str(i))
+            node_hashring.add_node("shard"+str(i))
             shards.append("shard"+str(i))
         #assign all addresses to a shard
         #if socketaddr is part of the shard, then assign shardid to the node
@@ -801,7 +815,7 @@ def instantiateReplica(viewstore, socketaddress):
     print("SUCCESS!")
 
 def getShards():
-    return list(hr.get_nodes())
+    return list(node_hashring.get_nodes())
 
 def getShardID(key, hashRing):
     return hashRing.get_node(key)
@@ -821,6 +835,12 @@ def assignShards(viewlist,shardCount):
     print(viewlist)
     print("\n\n\n")
     return viewlist
+
+def hashfn(key):
+    bytekey = bytes(key, 'ascii')
+    hashedval = hashlib.md5()
+    hashedval.update(bytekey)
+    return int(hashedval.hexdigest(), 16)
 
 if __name__ == "__main__":
     print("Hello there! CSE_Assignment4 replica instance initiated...")
@@ -874,11 +894,11 @@ if __name__ == "__main__":
     print(" Starting replica instance...")
     ip_add = "0.0.0.0"
 
-    hr = HashRing(hash_fn=m3h)
+    node_hashring = HashRing(hash_fn=hashfn)
 
     #add the shards to the hashring
     for i in range(int(shardcnt)):
-        hr.add_node("shard"+str(i))
+        node_hashring.add_node("shard"+str(i))
         shards.append("shard"+str(i))
     #assign all addresses to a shard
     #if socketaddr is part of the shard, then assign shardid to the node
@@ -887,8 +907,9 @@ if __name__ == "__main__":
             shard_members["shard"+str(i)] = nodes[i]
             if socketaddr in shard_members["shard"+str(i)]:
                 shard_id = "shard"+str(i)
-
-
+    print("testing hashring shit")
+    test_node = node_hashring.get_node('coconut')
+    print("node: ", test_node)
 
     print("shards created are", getShards())
     instantiateReplica(viewstore, socketaddr)
