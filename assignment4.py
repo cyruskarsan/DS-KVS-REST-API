@@ -564,11 +564,29 @@ class NodeShardMembers(Resource):
 # For any node, re-set it's shardID.
 class NodeSetShardId(Resource):
     def put(self):
+        #{"shard-id": id,"shards": shards, "shard-members":shard_members[id]}
+        print("(Log Message)[SHARD] Initiating node-set-shard-id PUT!")
         parser = reqparse.RequestParser(bundle_errors=True)
         parser.add_argument("shard-id", type=str)
+        parser.add_argument("shards", type=str)
+        parser.add_argument("shard-members", type=str)
         args = parser.parse_args()
         newshardID = args["shard-id"] # get shard-id
+        json_acceptable_string = args["shards"].replace("'", "\"")
+        d = json.loads(json_acceptable_string)
+        newshards = d # get shard-id
+        json_acceptable_string = args["shard-members"].replace("'", "\"")
+        d = json.loads(json_acceptable_string)
+        newshard_members = d # get shard-id
+        global shard_id 
+        global shards
+        global shard_members
+        print("Replacing current shard_id " + str(shard_id) + " with newshardID " + str(newshardID))
         shard_id = newshardID # update.
+        print("Replacing current shards " + str(shards) + " with newshards " + str(newshards))
+        shards = newshards # update.
+        print("Replacing current shard_members" + str(shard_members) + " with newshard_members " + str(newshard_members))
+        shard_members = newshard_members # update.
         return {"message":"Updated successfully"}, 200
 
 # Aux service not specified in the spec, for use in ShardReshard. 
@@ -579,9 +597,12 @@ class KVSOverwite(Resource):
         global dic
         print("(Log Message)[SHARD] Initiating KVSOverwrite PUT!")
         parser = reqparse.RequestParser(bundle_errors=True)
-        parser.add_argument("kvs", type=str)
+        parser.add_argument("kvs")
         args = parser.parse_args()
         kvs = args["kvs"] # get kvs to overwrite existing dictionary. 
+        if kvs is None:
+            kvs = {}
+            print("Changing none payload to {}!")
         print("Overwiting existing dictionary:\n" + str(dic) + "\nwith passed kvs:\n" + str(kvs))
         dic = kvs
         return {"message":"Updated successfully"}, 200
@@ -757,10 +778,10 @@ class ShardReshard(Resource):
 
         # Apply effects to ALL other shards!
         for id in shards: 
-            payload = {"shard-id": id}
+            payload = {"shard-id": str(id),"shards": str(shards), "shard-members": str(shard_members[id])}
             # For each shard, get list of all nodes in shard by calling same node's class function.
             for replicaaddr in shard_members[id]:
-                print("  - Sending PUT to " + replicaaddr + "/key-value-store-shard/node-set-shard-id...")
+                print("  - Sending PUT to " + replicaaddr + "/key-value-store-shard/node-set-shard-id with payload "+str(payload)+"...")
                 try:
                     request = req.put("http://" + replicaaddr +"/key-value-store-shard/node-set-shard-id", data=payload, timeout=timeoutduration)
                     print("   - Success!")
@@ -783,9 +804,10 @@ class ShardReshard(Resource):
         for key, value in aggregatedic.items(): # For each key/value pair
             shardID = getShardID(key, hr) # Apply the same schema as the PUT call
             sharddic[shardID][key] = value # Insert into dictionary for that shardID, ex) {'shard1':{'key':'value'},'shard2':{}}
-        print("Aggregatedic has been completed. It looks like: " + str(aggregatedic))
+        print("sharddic has been completed. It looks like: " + str(sharddic))
 
         for id in shards: 
+            print("For shardid " + str(id) + ", inserting kvs of " + str(sharddic[id]))
             payload = {"kvs": sharddic[id]}
             # For each shard, get list of all nodes in shard by calling same node's class function.
             for replicaaddr in shard_members[id]:
