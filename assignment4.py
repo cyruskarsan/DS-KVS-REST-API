@@ -244,6 +244,7 @@ class Store(Resource):
             if key not in dic:
                 return {'doesExist':False,'error':'Key does not exist','message':'Error in GET'}, 404
             return {"message":"Retrieved successfully", "causal-metadata": causalmetadata, "value": dic.get(key)}, 200
+        return None
         # else:
         #     #send request
         #     # nodelist = shard_members['shardid']
