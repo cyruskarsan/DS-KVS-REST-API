@@ -10,7 +10,13 @@ Text
 
 Arthurlot Li - ali64
 
-Text
+Implemented and debugged Resharding functionality
+as well as functionality for NodeShardId,
+NodeShardMembers (aux), NodeSetShardID (aux),
+and KVSOverwrite (aux). Also Implemented
+ShardIdMembers. Aided in the debugging
+process to ensure all functionality worked
+as expected.
 
 ============================================
 
