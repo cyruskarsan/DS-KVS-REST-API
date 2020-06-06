@@ -22,7 +22,10 @@ as expected.
 
 Karl Flores - kflore16
 
-Text
+Implemented adding new nodes to existing shards,
+fixed key-value-store GET/PUT/DELETE functionality
+Helped with debugging stuff, implemented splitting
+the nodes to shards.
 
 ============================================
 
