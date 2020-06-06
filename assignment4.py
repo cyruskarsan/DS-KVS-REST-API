@@ -189,7 +189,7 @@ def checkVersion(currentCopy, receivedCopy, replicaNumber, key):
                 differencesIndex[replicaNumber] = 'behind'
                 vc = receivedCopy
                 # iterate through the replicas
-                for address in viewstore:
+                for address in shard_members[shard_id]:
                     # if we are not dealing with the replica responding to the client
                     if address != socketaddr:
                         # We want to extract the vector clock
