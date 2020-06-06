@@ -659,7 +659,9 @@ class KVSOverwite(Resource):
         parser = reqparse.RequestParser(bundle_errors=True)
         parser.add_argument("kvs")
         args = parser.parse_args()
-        kvs = args["kvs"] # get kvs to overwrite existing dictionary. 
+        json_acceptable_string = args["kvs"].replace("'", "\"")
+        d = json.loads(json_acceptable_string)
+        kvs = d # get kvs to overwrite existing dictionary. 
         if kvs is None:
             kvs = {}
             print("Changing none payload to {}!")
@@ -901,7 +903,7 @@ class ShardReshard(Resource):
 
         for id in shards: 
             print("[ShardReshard] For shardid " + str(id) + ", inserting kvs of " + str(sharddic[id]))
-            payload = {"kvs": sharddic[id]}
+            payload = {"kvs": str(sharddic[id])}
             # For each shard, get list of all nodes in shard by calling same node's class function.
             for replicaaddr in shard_members[id]:
                 print("  - Sending PUT to " + replicaaddr + "...")
