@@ -636,12 +636,17 @@ class NodeSetShardId(Resource):
         shards = newshards # update.
         print("[NodeSetShardId] Replacing current shard_members" + str(shard_members) + " with newshard_members " + str(newshard_members))
         shard_members = newshard_members # update.
-        #print("[NodeSetShardId] Updating hashring...")
-        #hr = HashRing()
+        print("[NodeSetShardId] Updating hashring...")
+        shardcnt = len(shards)
+        global hr
+        hr = None
+        hr = HashRing(hash_fn=m3h)
         #add the shards to the hashring
-        #for i in range(int(shardcnt)):
-        #    hr.add_node("shard"+str(i))
-        #print("   - Done!")
+        if shardcnt != None:
+            for i in range(int(shardcnt)):
+                hr.add_node("shard"+str(i))
+        print("[NodeSetShardId] Shards created are: ", getShards())
+
         return {"message":"Updated successfully"}, 200
 
 # Aux service not specified in the spec, for use in ShardReshard. 
@@ -830,33 +835,38 @@ class ShardReshard(Resource):
         shard_members = {}
         nodes = None
 
-        if shardcnt != "":
+        if shardcnt != None:
             #Get node index from view list
             nodeidx = viewstore.index(socketaddr)
             #split the nodes in the viewlist into shards of index 0 to n
             nodes = assignShards(viewstore,shardcnt)
             #cannot partition nodes into shards if it cannot have at least 2 nodes per shard
             if nodes == -1:
-                print("[ShardReshard] Error stated above")
-                return {"message":"Not enough nodes to provide fault-tolerance with the given shard count!"}, 400
+                print("Error stated above")
             else:
                 #range starts from 0
                 for shard in range(int(shardcnt)):
                     if socketaddr in nodes[shard]:
                         shard_id = shard
-        hr = HashRing()
+                    
+        global hr
+        hr = None
+        hr = HashRing(hash_fn=m3h)
+
         #add the shards to the hashring
-        for i in range(int(shardcnt)):
-            hr.add_node("shard"+str(i))
-            shards.append("shard"+str(i))
+        if shardcnt != None:
+            for i in range(int(shardcnt)):
+                hr.add_node("shard"+str(i))
+                shards.append("shard"+str(i))
         #assign all addresses to a shard
         #if socketaddr is part of the shard, then assign shardid to the node
-        if nodes != None:
+        if nodes != None and shardcnt != None:
             for i in range(int(shardcnt)):
                 shard_members["shard"+str(i)] = nodes[i]
                 if socketaddr in shard_members["shard"+str(i)]:
                     shard_id = "shard"+str(i)
         #End copied code. 
+        print("[ShardReshard] Shards created are: ", getShards())
         print("[ShardReshard] Shard master list completed. New Schema now is: " + str(shard_members))# *****NOT COPIED
 
         # Apply effects to ALL other shards!
