@@ -31,6 +31,7 @@ the nodes to shards.
 
 Matthew Klein - marklein
 
-Text
+Implemented the key-to-shard functionality and 
+obtaining the shard-id of a key, given the key.
 
 ============================================
