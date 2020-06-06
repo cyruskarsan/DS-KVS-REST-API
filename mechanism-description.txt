@@ -1,19 +1,7 @@
-Nodes are organized into shards based on the initial number of shards given by the environment variable
-SHARD_COUNT. You are free to choose any mechanism to create the shards. The only requirement is that
-each shard must contain at least two nodes to provide fault tolerance. As an example, for a
-key-value store with 6 nodes and shard count of 2, your implemented mechanism might put node1, node2,
-and node3 into one shard and node4, node5, and node6 into the other shard. Or node1, node2, node3, and node4
-can be the members of the first shard and node5, node6 can be in the second shard. You need to provide the
-description of the mechanism you implemented in the mechanism-description.txt file.
-
-
- You can choose any resharding mechanism as long as it meets the
-requirement of having at least two nodes in each shard. You must give a description of your resharding
-mechanism in the mechanism-description.txt file.
-
-You need to provide a description of the key-to-shard mapping strategy you implement in the
-mechanism-description.txt file.
---------------------------------DESCRIPTION----------------------------------------------------------
 Nodes were assigned to shards using the SHARD_COUNT environment variable as well as the VIEW environ-
 ment variable. Using a list to isolate each addresses of the nodes, we then assign it to a shared based
 on the number of nodes and shards.
+
+For resharding:
+Collects all dictionaries from all different existing shards and gathers them in one master dictionary.
+Reshards using the existing assignshards() class and redistributes keys.

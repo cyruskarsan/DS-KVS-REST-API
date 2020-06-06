@@ -4,7 +4,11 @@ CSE 138 Assignment 4 Contribution Notes
 
 Cyrus Karsan - akarsan
 
-Text
+Did some premilary research on which consistant 
+hashing library to use, learned concepts behind
+consistent hashing and aided in design of sharding 
+components in addition to previous assignment requirements.
+Implemented shard id and shard key count endpoints. 
 
 ============================================
 
