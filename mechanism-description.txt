@@ -13,3 +13,7 @@ mechanism in the mechanism-description.txt file.
 
 You need to provide a description of the key-to-shard mapping strategy you implement in the
 mechanism-description.txt file.
+--------------------------------DESCRIPTION----------------------------------------------------------
+Nodes were assigned to shards using the SHARD_COUNT environment variable as well as the VIEW environ-
+ment variable. Using a list to isolate each addresses of the nodes, we then assign it to a shared based
+on the number of nodes and shards.
